@@ -1,0 +1,237 @@
+{
+  "name": "cursor-usage-monitor",
+  "displayName": "%displayName%",
+  "description": "%description%",
+  "version": "1.0.0",
+  "publisher": "kso",
+  "icon": "icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "l10n": "./l10n",
+  "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "id": "cursorUsageView",
+          "name": "%viewName%",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "cursor-usage-monitor.refresh",
+        "title": "%cmd.refresh%",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "cursor-usage-monitor.setToken",
+        "title": "%cmd.setToken%",
+        "icon": "$(key)"
+      },
+      {
+        "command": "cursor-usage-monitor.setDisplayCount",
+        "title": "%cmd.setDisplayCount%"
+      },
+      {
+        "command": "cursor-usage-monitor.setPollingInterval",
+        "title": "%cmd.setPollingInterval%"
+      },
+      {
+        "command": "cursor-usage-monitor.toggleTokenDetail",
+        "title": "%cmd.toggleTokenDetail%"
+      },
+      {
+        "command": "cursor-usage-monitor.configureAlerts",
+        "title": "%cmd.configureAlerts%",
+        "icon": "$(bell)"
+      },
+      {
+        "command": "cursor-usage-monitor.hideItem",
+        "title": "%cmd.hideItem%"
+      },
+      {
+        "command": "cursor-usage-monitor.showAllItems",
+        "title": "%cmd.showAllItems%"
+      },
+      {
+        "command": "cursor-usage-monitor.pinToStatusBar",
+        "title": "%cmd.pinToStatusBar%"
+      },
+      {
+        "command": "cursor-usage-monitor.unpinFromStatusBar",
+        "title": "%cmd.unpinFromStatusBar%"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "cursor-usage-monitor.refresh",
+          "when": "view == cursorUsageView",
+          "group": "navigation"
+        },
+        {
+          "command": "cursor-usage-monitor.setToken",
+          "when": "view == cursorUsageView",
+          "group": "navigation"
+        },
+        {
+          "command": "cursor-usage-monitor.configureAlerts",
+          "when": "view == cursorUsageView",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "cursor-usage-monitor.setDisplayCount",
+          "when": "view == cursorUsageView && viewItem == recentSection",
+          "group": "1_settings"
+        },
+        {
+          "command": "cursor-usage-monitor.setPollingInterval",
+          "when": "view == cursorUsageView && viewItem =~ /recentSection|summarySection/",
+          "group": "1_settings"
+        },
+        {
+          "command": "cursor-usage-monitor.toggleTokenDetail",
+          "when": "view == cursorUsageView && viewItem == tokensItem",
+          "group": "1_settings"
+        },
+        {
+          "command": "cursor-usage-monitor.hideItem",
+          "when": "view == cursorUsageView && viewItem =~ /summaryChild_.+/",
+          "group": "2_visibility"
+        },
+        {
+          "command": "cursor-usage-monitor.pinToStatusBar",
+          "when": "view == cursorUsageView && viewItem =~ /summaryChild_.+/",
+          "group": "2_visibility"
+        },
+        {
+          "command": "cursor-usage-monitor.unpinFromStatusBar",
+          "when": "view == cursorUsageView && viewItem =~ /summaryChild_.+/",
+          "group": "2_visibility"
+        },
+        {
+          "command": "cursor-usage-monitor.showAllItems",
+          "when": "view == cursorUsageView && viewItem == summarySection",
+          "group": "2_visibility"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "%config.title%",
+      "properties": {
+        "cursorUsageMonitor.displayCount": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "%config.displayCount%"
+        },
+        "cursorUsageMonitor.pollingInterval": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 60,
+          "description": "%config.pollingInterval%"
+        },
+        "cursorUsageMonitor.idleInterval": {
+          "type": "number",
+          "default": 60,
+          "minimum": 10,
+          "maximum": 600,
+          "description": "%config.idleInterval%"
+        },
+        "cursorUsageMonitor.showTokenDetail": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.showTokenDetail%"
+        },
+        "cursorUsageMonitor.sessionToken": {
+          "type": "string",
+          "default": "",
+          "description": "%config.sessionToken%"
+        },
+        "cursorUsageMonitor.hiddenItems": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string",
+            "enum": ["includedRequests", "onDemandUsage"]
+          },
+          "description": "%config.hiddenItems%"
+        },
+        "cursorUsageMonitor.statusBarItems": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string",
+            "enum": ["includedRequests", "onDemandUsage"]
+          },
+          "description": "%config.statusBarItems%"
+        },
+        "cursorUsageMonitor.alertEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.alertEnabled%"
+        },
+        "cursorUsageMonitor.alertItems": {
+          "type": "array",
+          "default": ["newSession"],
+          "items": {
+            "type": "string",
+            "enum": ["newSession", "includedRequests", "onDemandSpending", "totalTokens"]
+          },
+          "description": "%config.alertItems%"
+        },
+        "cursorUsageMonitor.alertThreshold.newSession": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0,
+          "description": "%config.alertThreshold.newSession%"
+        },
+        "cursorUsageMonitor.alertThreshold.includedRequests": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "description": "%config.alertThreshold.includedRequests%"
+        },
+        "cursorUsageMonitor.alertThreshold.onDemandSpending": {
+          "type": "number",
+          "default": 1.0,
+          "minimum": 0,
+          "description": "%config.alertThreshold.onDemandSpending%"
+        },
+        "cursorUsageMonitor.alertThreshold.totalTokens": {
+          "type": "number",
+          "default": 100000,
+          "minimum": 0,
+          "description": "%config.alertThreshold.totalTokens%"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "sharp": "^0.34.5",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "sql.js": "^1.13.0"
+  }
+}

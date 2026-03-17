@@ -1,0 +1,157 @@
+# Cursor Usage Monitor 插件设计规范
+
+## 概述
+
+本插件在 Cursor IDE 左侧侧边栏（Explorer）中添加 "Cursor 用量" 分栏，实时展示 Cursor AI 的用量信息，支持隐藏项目、状态栏固定和用量变化提醒。
+
+## 侧边栏结构
+
+TreeView 分为两个主区域：
+
+### 1. 📊 本月汇总（始终展开）
+
+标题行显示重置倒计时：`📊 本月汇总（重置倒计时：N天）`
+
+展示两项用量指标（每项可单独隐藏或固定到状态栏）：
+
+- **Included Requests**: 包含请求用量
+  - 格式: `已用/上限`（如 `500/500`）
+  - 数据来源: `/api/usage` 中 `gpt-4.numRequests` 和 `gpt-4.maxRequestUsage`
+  - 计算方式: `min(numRequests, maxRequestUsage) / maxRequestUsage`
+  - 颜色指示: 绿(<40%) → 黄(40-70%) → 红(>70%)
+  - contextValue: `summaryChild_includedRequests`
+
+- **On-Demand Usage**: 按需用量
+  - 格式: `$已花费/$上限`（如 `$37.20/$200`）
+  - 花费来源: `POST /api/dashboard/get-team-spend` → `spendCents`
+  - 上限来源: `get-team-spend` → `hardLimitOverrideDollars`
+  - contextValue: `summaryChild_onDemandUsage`
+
+### 2. 📋 最近消耗（始终展开）
+
+展示最近 N 条详细用量事件（N 由用户配置，默认 5）：
+
+- 数据来源: `POST /api/dashboard/get-filtered-usage-events`
+- 每条记录可展开，主行显示: `时间  模型名  类型`
+- 展开后显示:
+  - Tokens: 总量（可选显示输入/输出明细）
+  - Requests: 请求数
+  - 费用: 消耗金额
+- contextValue: `recentSection`（父项）
+
+## 数据获取
+
+### API 端点
+
+1. **`GET /api/usage?user={userId}`** — 获取 Included Requests 数据
+   - `gpt-4.numRequests` / `gpt-4.maxRequestUsage`
+   - `startOfMonth` 用于计算重置倒计时
+
+2. **`POST /api/dashboard/teams`** — 获取 teamId
+
+3. **`POST /api/auth/me`** — 获取用户在团队中的 numeric ID
+
+4. **`POST /api/dashboard/get-team-spend`** — 获取 On-Demand 数据
+   - 请求体: `{ teamId }`
+   - 匹配用户的 `spendCents`、`hardLimitOverrideDollars`、`fastPremiumRequests`
+
+5. **`POST /api/dashboard/get-filtered-usage-events`** — 获取详细用量事件
+   - 请求体: `{ startDate, endDate, page, pageSize, teamId, userId }`
+   - 返回 `usageEventsDisplay` 数组
+
+### 认证
+
+- Cookie: `WorkosCursorSessionToken={userId}%3A%3A{accessToken}`
+- Token 获取方式（优先级从高到低）：
+  1. 用户在设置中手动填写 `cursorUsageMonitor.sessionToken`
+  2. 自动从本地 Cursor 配置提取
+
+### 请求头
+
+模拟浏览器请求:
+- `Origin: https://cursor.com`
+- `Referer: https://cursor.com/dashboard`
+- `User-Agent: Mozilla/5.0 ...`
+- `Sec-Fetch-Site: same-origin`
+
+## 功能模块
+
+### 隐藏/显示
+
+- 右键 Included/On-Demand 项可隐藏
+- 右键"本月汇总"可恢复显示全部
+- 配置: `hiddenItems` (string[])
+
+### 状态栏固定
+
+- 右键 Included/On-Demand 项可固定到底部状态栏
+- 状态栏格式: `$(graph) Incl: 500/500` / `$(zap) OD: $37.20/$200`
+- 配置: `statusBarItems` (string[])
+
+### 用量提醒
+
+- 可监控项: newSession / includedRequests / onDemandSpending / totalTokens
+- 每项可单独设置阈值（可设为 0，任何正向变化都触发）
+- 超出阈值时在屏幕中央弹出模态对话框（`modal: true`）
+- 通过标题栏 🔔 图标配置
+- 配置: `alertEnabled`, `alertItems`, `alertThreshold.*`
+
+### 变化检测
+
+- 遍历所有显示的事件（数量由 `displayCount` 决定）
+- 逐一比较每条事件的 `totalTokens`、`requests`、`chargedCents`
+- 任何一条事件的变化都会触发 UI 刷新
+- 添加并发锁（`_polling`）防止重复请求
+- 手动刷新使用 `force=true` 始终刷新视图
+
+## 用户配置项
+
+| 配置键 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `displayCount` | number | 5 | 最近消耗显示条数 |
+| `pollingInterval` | number | 3 | 轮询间隔（秒） |
+| `idleInterval` | number | 60 | 空闲检查间隔（秒） |
+| `showTokenDetail` | boolean | false | 显示 Token 输入/输出明细 |
+| `sessionToken` | string | "" | 手动设置的 Session Token |
+| `hiddenItems` | string[] | [] | 隐藏的项目 |
+| `statusBarItems` | string[] | [] | 固定到状态栏的项目 |
+| `alertEnabled` | boolean | false | 启用用量提醒 |
+| `alertItems` | string[] | ["newSession"] | 提醒监控项 |
+| `alertThreshold.newSession` | number | 1 | 新会话阈值 |
+| `alertThreshold.includedRequests` | number | 10 | Included Requests 阈值 |
+| `alertThreshold.onDemandSpending` | number | 1.0 | On-Demand 花费阈值($) |
+| `alertThreshold.totalTokens` | number | 100000 | Token 消耗阈值 |
+
+## 右键菜单
+
+| 位置 | contextValue | 菜单项 |
+|------|-------------|--------|
+| 标题栏 | — | 刷新、设置 Token、配置提醒 |
+| 本月汇总 | summarySection | 设置刷新间隔、显示全部项 |
+| Included/On-Demand | summaryChild_* | 隐藏、固定到状态栏、从状态栏移除 |
+| 最近消耗 | recentSection | 设置显示条数、设置刷新间隔 |
+| Tokens 行 | tokensItem | 切换 Token 详情 |
+
+## 显示格式
+
+### Token 数量
+- ≥ 10000: `N.N万`
+- ≥ 1000: `N.NK`
+- < 1000: 原始数字
+
+### 模型名映射
+- `claude-4.6-opus-high-thinking` → `Claude 4.6 Opus`
+- `claude-4-sonnet-thinking` → `Claude 4 Sonnet`
+- `gpt-4o` → `GPT-4o`
+- 其他保持原始名称
+
+## 国际化
+
+- `package.nls.json` / `package.nls.zh-cn.json` — 命令和配置描述
+- `l10n/bundle.l10n.zh-cn.json` — 代码中 UI 文本
+- 使用 `vscode.l10n.t()` API
+
+## 日志
+
+- Output Channel: "Cursor Usage Monitor - Tracker" / "Cursor Usage Monitor - Extension"
+- 记录每次 poll 的编号、耗时、数据对比和变化检测结果
