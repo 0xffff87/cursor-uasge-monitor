@@ -83,7 +83,7 @@ Configure alerts to get notified when usage changes exceed thresholds:
 
 1. Click the 🔔 icon in the view title bar
 2. Enable alerts → Select monitoring items → Set thresholds
-3. Available monitors: New sessions, Included Requests, On-Demand spending, Token consumption
+3. Available monitors: New usage requests, Included Requests, On-Demand spending, Token consumption
 4. All thresholds can be set to 0 (any change triggers alert)
 
 ### Build from Source
@@ -175,7 +175,7 @@ npx @vscode/vsce package --no-dependencies
 
 1. 点击标题栏 🔔 图标
 2. 开启提醒 → 选择监控项 → 设置阈值
-3. 可监控项：新增会话、Included Requests、On-Demand 花费、Token 消耗
+3. 可监控项：新增调用请求、Included Requests、On-Demand 花费、Token 消耗
 4. 阈值可设为 0（任何变化都会触发提醒）
 
 ### 从源码构建
@@ -185,6 +185,38 @@ npm install
 npm run compile
 npx @vscode/vsce package --no-dependencies
 ```
+
+---
+
+## Changelog / 更新日志
+
+### v1.1.0
+
+**Bug Fixes**
+
+- Fixed new usage request detection: now uses timestamp comparison instead of array length, which was always capped by `displayCount`
+- Fixed total token change detection: only compares tokens of events present in both snapshots, excluding noise from new/dropped events
+- Added alert dialog anti-stacking: only one alert dialog shows at a time, preventing multiple modals from piling up
+- Fixed config change listener memory leak (missing disposal)
+- Added HTTP request timeout (30s) to prevent polling from getting permanently blocked
+- Added error handling for initial poll and alert dialog promise rejection
+
+**Changes**
+
+- Renamed "New AI sessions" to "New usage requests" in all UI text
+
+**修复**
+
+- 修复新增调用请求检测：改用 timestamp 比较识别新事件，而非依赖数组长度（受 `displayCount` 限制始终不变）
+- 修复 Token 总量变化检测：只比较两次快照中都存在的事件的 token 变化，排除新增/滚出事件的干扰
+- 新增弹窗防堆积：同时只显示一个提醒弹窗，防止多个 modal 对话框堆积
+- 修复配置变更监听器内存泄漏（未加入 dispose 列表）
+- 添加 HTTP 请求 30 秒超时，防止网络卡死导致轮询永久阻塞
+- 添加初始轮询和弹窗 Promise rejection 的错误处理
+
+**变更**
+
+- 将"新增 AI 会话"重命名为"新增调用请求"
 
 ---
 

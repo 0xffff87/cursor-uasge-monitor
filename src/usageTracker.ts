@@ -133,7 +133,9 @@ export class UsageTracker {
         const alerts: AlertChange[] = [];
 
         if (items.includes("newSession")) {
-            const newCount = curr.events.length - prev.events.length;
+            // 通过比较 timestamp 识别新事件，而非数组长度（因为 API 返回数量受 displayCount 限制，长度可能不变）
+            const prevTimestamps = new Set(prev.events.map(e => e.timestamp));
+            const newCount = curr.events.filter(e => !prevTimestamps.has(e.timestamp)).length;
             const threshold = config.get<number>("alertThreshold.newSession", 1);
             if (newCount > 0 && newCount >= threshold) {
                 alerts.push({ type: "newSession", delta: newCount, threshold });
@@ -157,8 +159,17 @@ export class UsageTracker {
         }
 
         if (items.includes("totalTokens")) {
-            const prevTokens = prev.events.reduce((sum, e) => sum + e.totalTokens, 0);
-            const currTokens = curr.events.reduce((sum, e) => sum + e.totalTokens, 0);
+            // 只比较两次快照中都存在的事件（通过 timestamp 匹配），排除新增事件对 token 总量的影响
+            const prevMap = new Map(prev.events.map(e => [e.timestamp, e.totalTokens]));
+            let prevTokens = 0;
+            let currTokens = 0;
+            for (const e of curr.events) {
+                const prevToken = prevMap.get(e.timestamp);
+                if (prevToken !== undefined) {
+                    prevTokens += prevToken;
+                    currTokens += e.totalTokens;
+                }
+            }
             const delta = currTokens - prevTokens;
             const threshold = config.get<number>("alertThreshold.totalTokens", 100000);
             if (delta > 0 && delta >= threshold) {

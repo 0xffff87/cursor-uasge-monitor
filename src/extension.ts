@@ -10,7 +10,7 @@ const statusBarItems: Map<string, vscode.StatusBarItem> = new Map();
 
 function getAlertLabel(type: string): string {
     const map: Record<string, string> = {
-        newSession: vscode.l10n.t("New AI sessions"),
+        newSession: vscode.l10n.t("New usage requests"),
         includedRequests: vscode.l10n.t("Included Requests change"),
         onDemandSpending: vscode.l10n.t("On-Demand spending change"),
         totalTokens: vscode.l10n.t("Total Token consumption change"),
@@ -26,10 +26,18 @@ function getItemLabel(id: string): string {
     return map[id] || id;
 }
 
+function getSectionLabel(id: string): string {
+    const map: Record<string, string> = {
+        summarySection: vscode.l10n.t("Monthly Summary"),
+        recentSection: vscode.l10n.t("Recent Usage"),
+    };
+    return map[id] || id;
+}
+
 function formatAlertMessage(alert: AlertChange): string {
     switch (alert.type) {
         case "newSession":
-            return vscode.l10n.t("Detected {0} new AI session(s)", alert.delta);
+            return vscode.l10n.t("Detected {0} new usage request(s)", alert.delta);
         case "includedRequests":
             return vscode.l10n.t("Included Requests increased by {0}", alert.delta);
         case "onDemandSpending":
@@ -94,7 +102,13 @@ export function activate(context: vscode.ExtensionContext) {
         updateStatusBar();
     };
 
+    let alertDialogShowing = false;
+
     tracker.onAlert = (alerts: AlertChange[]) => {
+        // 防止弹窗堆积：当前有弹窗显示时跳过新的提醒
+        if (alertDialogShowing) return;
+
+        alertDialogShowing = true;
         const messages = alerts.map(formatAlertMessage);
         const title = vscode.l10n.t("Cursor Usage Alert");
         const detail = messages.join("\n");
@@ -103,9 +117,12 @@ export function activate(context: vscode.ExtensionContext) {
             { modal: true, detail },
             vscode.l10n.t("View Settings"),
         ).then((choice) => {
+            alertDialogShowing = false;
             if (choice === vscode.l10n.t("View Settings")) {
                 vscode.commands.executeCommand("cursor-usage-monitor.configureAlerts");
             }
+        }, () => {
+            alertDialogShowing = false;
         });
     };
 
@@ -231,9 +248,40 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(
+        vscode.commands.registerCommand("cursor-usage-monitor.hideSection", async (item?: any) => {
+            const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
+            const hidden = config.get<string[]>("hiddenItems", []);
+            const sectionId = item?.contextValue;
+            if (sectionId && !hidden.includes(sectionId)) {
+                hidden.push(sectionId);
+                await config.update("hiddenItems", hidden, vscode.ConfigurationTarget.Global);
+                const label = getSectionLabel(sectionId);
+                vscode.window.showInformationMessage(vscode.l10n.t("{0} hidden", label));
+            }
+        }),
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("cursor-usage-monitor.hideEvent", async (item?: any) => {
+            if (!item?.id) return;
+            const match = item.id.match(/^event_(\d+)$/);
+            if (!match) return;
+            const timestamp = parseInt(match[1]);
+            const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
+            const hiddenTs = config.get<number[]>("hiddenEventTimestamps", []);
+            if (!hiddenTs.includes(timestamp)) {
+                hiddenTs.push(timestamp);
+                await config.update("hiddenEventTimestamps", hiddenTs, vscode.ConfigurationTarget.Global);
+                vscode.window.showInformationMessage(vscode.l10n.t("{0} hidden", item.label || ""));
+            }
+        }),
+    );
+
+    context.subscriptions.push(
         vscode.commands.registerCommand("cursor-usage-monitor.showAllItems", async () => {
             const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
             await config.update("hiddenItems", [], vscode.ConfigurationTarget.Global);
+            await config.update("hiddenEventTimestamps", [], vscode.ConfigurationTarget.Global);
             vscode.window.showInformationMessage(vscode.l10n.t("All items are now visible"));
         }),
     );
@@ -412,17 +460,19 @@ export function activate(context: vscode.ExtensionContext) {
         }),
     );
 
-    tracker.poll();
+    tracker.poll().catch((err) => console.error("[CursorUsageMonitor] Initial poll error:", err));
     startPolling();
     updateStatusBar();
 
-    vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration("cursorUsageMonitor")) {
-            treeProvider.refresh();
-            updateStatusBar();
-            startPolling();
-        }
-    });
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration((e) => {
+            if (e.affectsConfiguration("cursorUsageMonitor")) {
+                treeProvider.refresh();
+                updateStatusBar();
+                startPolling();
+            }
+        }),
+    );
 }
 
 const extLog = vscode.window.createOutputChannel("Cursor Usage Monitor - Extension");

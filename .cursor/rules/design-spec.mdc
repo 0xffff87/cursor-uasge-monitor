@@ -4,6 +4,9 @@
 
 本插件在 Cursor IDE 左侧侧边栏（Explorer）中添加 "Cursor 用量" 分栏，实时展示 Cursor AI 的用量信息，支持隐藏项目、状态栏固定和用量变化提醒。
 
+## 项目要求：
+- 用户输入的新的要求需要同步更新到此规则文件中
+
 ## 侧边栏结构
 
 TreeView 分为两个主区域：
@@ -78,9 +81,14 @@ TreeView 分为两个主区域：
 
 ### 隐藏/显示
 
-- 右键 Included/On-Demand 项可隐藏
-- 右键"本月汇总"可恢复显示全部
-- 配置: `hiddenItems` (string[])
+- 可隐藏的内容（隐藏仅影响显示，不影响数据获取和监控提醒）：
+  - 整个"本月汇总"区域 — 右键区域标题 → "隐藏此区域"
+  - 整个"最近消耗"区域 — 右键区域标题 → "隐藏此区域"
+  - Included Requests / On-Demand Usage 子项 — 右键子项 → "隐藏此项"
+  - 单个消耗条目 — 右键条目 → "隐藏此条目"（通过 timestamp 标识）
+- 恢复显示：右键区域标题或标题栏 → "显示全部项"（同时清除区域隐藏和事件隐藏）
+- 配置: `hiddenItems` (string[]) — 隐藏的区域和子项
+- 配置: `hiddenEventTimestamps` (number[]) — 隐藏的事件时间戳
 
 ### 状态栏固定
 
@@ -90,19 +98,23 @@ TreeView 分为两个主区域：
 
 ### 用量提醒
 
-- 可监控项: newSession / includedRequests / onDemandSpending / totalTokens
+- 可监控项: newSession（新增调用请求） / includedRequests / onDemandSpending / totalTokens
 - 每项可单独设置阈值（可设为 0，任何正向变化都触发）
 - 超出阈值时在屏幕中央弹出模态对话框（`modal: true`）
+- 防弹窗堆积：同时只显示一个提醒弹窗，当前弹窗未关闭时跳过新提醒
 - 通过标题栏 🔔 图标配置
 - 配置: `alertEnabled`, `alertItems`, `alertThreshold.*`
+- newSession 检测方式：通过比较事件 timestamp 识别新事件（非数组长度差异）
+- totalTokens 检测方式：只比较两次快照中都存在的事件的 token 变化，排除新增事件干扰
 
 ### 变化检测
 
 - 遍历所有显示的事件（数量由 `displayCount` 决定）
-- 逐一比较每条事件的 `totalTokens`、`requests`、`chargedCents`
+- 逐一比较每条事件的 `timestamp`、`totalTokens`、`requests`、`chargedCents`
 - 任何一条事件的变化都会触发 UI 刷新
 - 添加并发锁（`_polling`）防止重复请求
 - 手动刷新使用 `force=true` 始终刷新视图
+- HTTP 请求设置 30 秒超时，防止网络卡死导致轮询阻塞
 
 ## 用户配置项
 
@@ -113,11 +125,12 @@ TreeView 分为两个主区域：
 | `idleInterval` | number | 60 | 空闲检查间隔（秒） |
 | `showTokenDetail` | boolean | false | 显示 Token 输入/输出明细 |
 | `sessionToken` | string | "" | 手动设置的 Session Token |
-| `hiddenItems` | string[] | [] | 隐藏的项目 |
+| `hiddenItems` | string[] | [] | 隐藏的区域和项目（summarySection, recentSection, includedRequests, onDemandUsage） |
+| `hiddenEventTimestamps` | number[] | [] | 隐藏的事件时间戳（右键菜单自动管理） |
 | `statusBarItems` | string[] | [] | 固定到状态栏的项目 |
 | `alertEnabled` | boolean | false | 启用用量提醒 |
 | `alertItems` | string[] | ["newSession"] | 提醒监控项 |
-| `alertThreshold.newSession` | number | 1 | 新会话阈值 |
+| `alertThreshold.newSession` | number | 1 | 新增调用请求阈值 |
 | `alertThreshold.includedRequests` | number | 10 | Included Requests 阈值 |
 | `alertThreshold.onDemandSpending` | number | 1.0 | On-Demand 花费阈值($) |
 | `alertThreshold.totalTokens` | number | 100000 | Token 消耗阈值 |
@@ -126,10 +139,11 @@ TreeView 分为两个主区域：
 
 | 位置 | contextValue | 菜单项 |
 |------|-------------|--------|
-| 标题栏 | — | 刷新、设置 Token、配置提醒 |
-| 本月汇总 | summarySection | 设置刷新间隔、显示全部项 |
-| Included/On-Demand | summaryChild_* | 隐藏、固定到状态栏、从状态栏移除 |
-| 最近消耗 | recentSection | 设置显示条数、设置刷新间隔 |
+| 标题栏 | — | 刷新、设置 Token、配置提醒、显示全部项 |
+| 本月汇总 | summarySection | 设置刷新间隔、隐藏此区域、显示全部项 |
+| Included/On-Demand | summaryChild_* | 隐藏此项、固定到状态栏、从状态栏移除 |
+| 最近消耗 | recentSection | 设置显示条数、设置刷新间隔、隐藏此区域、显示全部项 |
+| 单个消耗条目 | recentEvent | 隐藏此条目 |
 | Tokens 行 | tokensItem | 切换 Token 详情 |
 
 ## 显示格式

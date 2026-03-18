@@ -181,6 +181,7 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
         };
 
         const req = https.request(options, (res) => {
+            req.removeAllListeners("timeout");
             if (res.statusCode === 401) {
                 clearCachedToken();
                 if (retryOnAuth) { retryRequest(method, url, body).then(resolve); }
@@ -213,6 +214,7 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
         });
 
         req.on("error", () => resolve(null));
+        req.setTimeout(30000, () => { req.destroy(); resolve(null); });
         if (postData) { req.write(postData); }
         req.end();
     });

@@ -27,7 +27,9 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
 
         const items: UsageTreeItem[] = [];
 
-        if (snapshot) {
+        const hiddenItems = config.get<string[]>("hiddenItems", []);
+
+        if (snapshot && !hiddenItems.includes("summarySection")) {
             let summaryLabel: string;
             if (snapshot.startOfMonth) {
                 const resetDate = new Date(snapshot.startOfMonth);
@@ -44,7 +46,6 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
             );
             summaryItem.contextValue = "summarySection";
             const children: UsageTreeItem[] = [];
-            const hiddenItems = config.get<string[]>("hiddenItems", []);
 
             if (!hiddenItems.includes("includedRequests")) {
                 const includedItem = new UsageTreeItem(
@@ -78,15 +79,19 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
             items.push(summaryItem);
         }
 
-        if (snapshot && snapshot.events.length > 0) {
-            const count = Math.min(displayCount, snapshot.events.length);
+        if (snapshot && snapshot.events.length > 0 && !hiddenItems.includes("recentSection")) {
+            const hiddenTimestamps = new Set(config.get<number[]>("hiddenEventTimestamps", []));
+            const visibleEvents = snapshot.events
+                .slice(0, displayCount)
+                .filter((e) => !hiddenTimestamps.has(e.timestamp));
+            const count = visibleEvents.length;
             const recentItem = new UsageTreeItem(
                 `📋 ${vscode.l10n.t("Recent Usage ({0} entries)", count)}`,
                 vscode.TreeItemCollapsibleState.Expanded,
             );
             recentItem.contextValue = "recentSection";
 
-            recentItem.children = snapshot.events.slice(0, displayCount).map((e) => {
+            recentItem.children = visibleEvents.map((e) => {
                 const timeStr = formatEventTime(e.timestamp);
                 const typeLabel = e.kind.includes("USAGE_BASED") ? "On-Demand" : "Included";
                 const modelStr = shortenModel(e.model);
@@ -95,11 +100,13 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
                     `${timeStr}  ${modelStr}`,
                     vscode.TreeItemCollapsibleState.Collapsed,
                 );
+                entry.id = `event_${e.timestamp}`;
                 entry.description = `${typeLabel}`;
                 entry.iconPath = e.kind.includes("USAGE_BASED")
                     ? new vscode.ThemeIcon("zap", new vscode.ThemeColor("charts.orange"))
                     : new vscode.ThemeIcon("check", new vscode.ThemeColor("charts.green"));
                 entry.tooltip = vscode.l10n.t("Click to expand details");
+                entry.contextValue = "recentEvent";
 
                 const detailChildren: UsageTreeItem[] = [];
                 const showTokenDetail = config.get<boolean>("showTokenDetail", false);
@@ -145,7 +152,7 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
             });
 
             items.push(recentItem);
-        } else if (snapshot) {
+        } else if (snapshot && !hiddenItems.includes("recentSection")) {
             const noEventsItem = new UsageTreeItem(
                 `📋 ${vscode.l10n.t("Recent Usage")}`,
                 vscode.TreeItemCollapsibleState.None,

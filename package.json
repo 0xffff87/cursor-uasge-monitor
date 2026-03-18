@@ -2,7 +2,7 @@
   "name": "cursor-usage-monitor",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "kso",
   "icon": "icon.png",
   "engines": {
@@ -59,6 +59,14 @@
         "title": "%cmd.hideItem%"
       },
       {
+        "command": "cursor-usage-monitor.hideSection",
+        "title": "%cmd.hideSection%"
+      },
+      {
+        "command": "cursor-usage-monitor.hideEvent",
+        "title": "%cmd.hideEvent%"
+      },
+      {
         "command": "cursor-usage-monitor.showAllItems",
         "title": "%cmd.showAllItems%"
       },
@@ -87,6 +95,11 @@
           "command": "cursor-usage-monitor.configureAlerts",
           "when": "view == cursorUsageView",
           "group": "navigation"
+        },
+        {
+          "command": "cursor-usage-monitor.showAllItems",
+          "when": "view == cursorUsageView",
+          "group": "3_visibility"
         }
       ],
       "view/item/context": [
@@ -111,6 +124,16 @@
           "group": "2_visibility"
         },
         {
+          "command": "cursor-usage-monitor.hideSection",
+          "when": "view == cursorUsageView && viewItem =~ /summarySection|recentSection/",
+          "group": "2_visibility"
+        },
+        {
+          "command": "cursor-usage-monitor.hideEvent",
+          "when": "view == cursorUsageView && viewItem == recentEvent",
+          "group": "2_visibility"
+        },
+        {
           "command": "cursor-usage-monitor.pinToStatusBar",
           "when": "view == cursorUsageView && viewItem =~ /summaryChild_.+/",
           "group": "2_visibility"
@@ -122,7 +145,7 @@
         },
         {
           "command": "cursor-usage-monitor.showAllItems",
-          "when": "view == cursorUsageView && viewItem == summarySection",
+          "when": "view == cursorUsageView && viewItem =~ /summarySection|recentSection/",
           "group": "2_visibility"
         }
       ]
@@ -166,9 +189,17 @@
           "default": [],
           "items": {
             "type": "string",
-            "enum": ["includedRequests", "onDemandUsage"]
+            "enum": ["summarySection", "recentSection", "includedRequests", "onDemandUsage"]
           },
           "description": "%config.hiddenItems%"
+        },
+        "cursorUsageMonitor.hiddenEventTimestamps": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "number"
+          },
+          "description": "%config.hiddenEventTimestamps%"
         },
         "cursorUsageMonitor.statusBarItems": {
           "type": "array",
