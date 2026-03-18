@@ -66,8 +66,8 @@ TreeView 分为两个主区域：
 
 - Cookie: `WorkosCursorSessionToken={userId}%3A%3A{accessToken}`
 - Token 获取方式（优先级从高到低）：
-  1. 用户在设置中手动填写 `cursorUsageMonitor.sessionToken`
-  2. 自动从本地 Cursor 配置提取
+  1. 自动从本地 Cursor 配置提取（userId + accessToken）
+  2. 自动获取失败时回退到用户手动设置的 token（存储在 VS Code SecretStorage 加密存储中，key: `cursorUsageMonitor.sessionToken`）
 
 ### 请求头
 
@@ -124,7 +124,7 @@ TreeView 分为两个主区域：
 | `pollingInterval` | number | 3 | 轮询间隔（秒） |
 | `idleInterval` | number | 60 | 空闲检查间隔（秒） |
 | `showTokenDetail` | boolean | false | 显示 Token 输入/输出明细 |
-| `sessionToken` | string | "" | 手动设置的 Session Token |
+| `sessionToken` | SecretStorage | "" | 手动设置的 Session Token（加密存储，不在 settings.json 中） |
 | `hiddenItems` | string[] | [] | 隐藏的区域和项目（summarySection, recentSection, includedRequests, onDemandUsage） |
 | `hiddenEventTimestamps` | number[] | [] | 隐藏的事件时间戳（右键菜单自动管理） |
 | `statusBarItems` | string[] | [] | 固定到状态栏的项目 |

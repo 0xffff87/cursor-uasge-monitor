@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { UsageTracker, AlertChange } from "./usageTracker";
 import { UsageTreeProvider } from "./treeView";
+import { initSecretStorage, storeSecretToken, deleteSecretToken, getSecretToken } from "./api";
 
 let pollTimer: NodeJS.Timeout | undefined;
 let tracker: UsageTracker;
@@ -87,7 +88,13 @@ function updateStatusBar() {
     }
 }
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
+    // 初始化 SecretStorage，用于加密存储 sessionToken
+    initSecretStorage(context.secrets);
+
+    // 从 settings.json 迁移明文 token 到 SecretStorage
+    await migrateTokenToSecretStorage(context.secrets);
+
     tracker = new UsageTracker();
     treeProvider = new UsageTreeProvider(tracker);
 
@@ -100,6 +107,12 @@ export function activate(context: vscode.ExtensionContext) {
     tracker.onUpdate = () => {
         treeProvider.refresh();
         updateStatusBar();
+        // 数据加载后自动展开 TreeView，确保用户能看到内容
+        const children = treeProvider.getChildren();
+        if (children.length > 0) {
+            treeView.reveal(children[0], { expand: true, focus: false, select: false })
+                .then(undefined, () => {});
+        }
     };
 
     let alertDialogShowing = false;
@@ -134,8 +147,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.commands.registerCommand("cursor-usage-monitor.setToken", async () => {
-            const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
-            const current = config.get<string>("sessionToken", "");
+            const current = await getSecretToken() || "";
 
             const token = await vscode.window.showInputBox({
                 prompt: vscode.l10n.t("Enter Cursor Session Token (format: userId%3A%3AaccessToken)"),
@@ -146,7 +158,11 @@ export function activate(context: vscode.ExtensionContext) {
             });
 
             if (token !== undefined) {
-                await config.update("sessionToken", token, vscode.ConfigurationTarget.Global);
+                if (token) {
+                    await storeSecretToken(token);
+                } else {
+                    await deleteSecretToken();
+                }
                 vscode.window.showInformationMessage(
                     token ? vscode.l10n.t("Token saved") : vscode.l10n.t("Token cleared")
                 );
@@ -493,6 +509,21 @@ function startPolling() {
             console.error("[CursorUsageMonitor] Poll error:", err);
         });
     }, pollingInterval);
+}
+
+async function migrateTokenToSecretStorage(secrets: vscode.SecretStorage): Promise<void> {
+    const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
+    const oldToken = config.get<string>("sessionToken", "");
+    if (oldToken) {
+        const existing = await secrets.get("cursorUsageMonitor.sessionToken");
+        if (!existing) {
+            await secrets.store("cursorUsageMonitor.sessionToken", oldToken);
+            extLog.appendLine("已将 sessionToken 从 settings.json 迁移到 SecretStorage");
+        }
+        // 清除 settings.json 中的明文 token
+        await config.update("sessionToken", undefined, vscode.ConfigurationTarget.Global);
+        extLog.appendLine("已清除 settings.json 中的明文 sessionToken");
+    }
 }
 
 export function deactivate() {

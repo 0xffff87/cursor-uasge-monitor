@@ -2,7 +2,7 @@
   "name": "cursor-usage-monitor",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "publisher": "kso",
   "icon": "icon.png",
   "engines": {
@@ -178,11 +178,6 @@
           "type": "boolean",
           "default": false,
           "description": "%config.showTokenDetail%"
-        },
-        "cursorUsageMonitor.sessionToken": {
-          "type": "string",
-          "default": "",
-          "description": "%config.sessionToken%"
         },
         "cursorUsageMonitor.hiddenItems": {
           "type": "array",

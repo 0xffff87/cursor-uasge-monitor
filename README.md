@@ -34,8 +34,11 @@ The extension attempts to automatically detect your Cursor session from local co
 
 1. Click the **key icon** (🔑) in the "Cursor Usage" view title bar
 2. Enter your `WorkosCursorSessionToken` cookie value (format: `userId%3A%3AaccessToken`)
+3. The token is securely stored using VS Code's SecretStorage (encrypted, never in plain text)
 
 To find your token: Open browser DevTools on [cursor.com](https://cursor.com), go to Application → Cookies, and copy the `WorkosCursorSessionToken` value.
+
+> **Upgrade note**: If you previously stored your token in `settings.json`, it will be automatically migrated to SecretStorage and removed from `settings.json` on first launch.
 
 ### Configuration
 
@@ -45,7 +48,6 @@ To find your token: Open browser DevTools on [cursor.com](https://cursor.com), g
 | `pollingInterval` | 3 | Polling interval in seconds |
 | `idleInterval` | 60 | Idle polling interval in seconds |
 | `showTokenDetail` | false | Show input/output token breakdown |
-| `sessionToken` | "" | Manual session token (leave empty for auto-detect) |
 | `hiddenItems` | [] | Items hidden from sidebar (includedRequests, onDemandUsage) |
 | `statusBarItems` | [] | Items pinned to status bar |
 | `alertEnabled` | false | Enable usage change alerts |
@@ -126,8 +128,11 @@ npx @vscode/vsce package --no-dependencies
 
 1. 点击 "Cursor 用量" 视图标题栏中的 🔑 图标
 2. 输入 `WorkosCursorSessionToken` Cookie 值（格式：`userId%3A%3AaccessToken`）
+3. Token 使用 VS Code SecretStorage 加密存储，不会以明文形式出现在配置文件中
 
 获取方法：浏览器打开 [cursor.com](https://cursor.com) → F12 → Application → Cookies → 复制 `WorkosCursorSessionToken`。
+
+> **升级说明**：如果你之前在 `settings.json` 中存储了 Token，插件首次启动时会自动将其迁移到 SecretStorage 并从 `settings.json` 中删除明文记录。
 
 ### 配置项
 
@@ -137,7 +142,6 @@ npx @vscode/vsce package --no-dependencies
 | `pollingInterval` | 3 | 轮询间隔（秒） |
 | `idleInterval` | 60 | 空闲时的轮询间隔（秒） |
 | `showTokenDetail` | false | 是否显示 Token 输入/输出明细 |
-| `sessionToken` | "" | 手动设置 Session Token（留空自动检测） |
 | `hiddenItems` | [] | 侧边栏隐藏的项目 |
 | `statusBarItems` | [] | 固定到状态栏的项目 |
 | `alertEnabled` | false | 启用用量变化提醒 |

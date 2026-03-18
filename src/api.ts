@@ -4,6 +4,28 @@ import { getUserId, getAccessToken, clearCachedToken } from "./credentials";
 
 const outputChannel = vscode.window.createOutputChannel("Cursor Usage Monitor");
 
+const SECRET_KEY = "cursorUsageMonitor.sessionToken";
+let secretStorage: vscode.SecretStorage | null = null;
+
+export function initSecretStorage(storage: vscode.SecretStorage): void {
+    secretStorage = storage;
+}
+
+export async function getSecretToken(): Promise<string | undefined> {
+    if (!secretStorage) return undefined;
+    return secretStorage.get(SECRET_KEY);
+}
+
+export async function storeSecretToken(token: string): Promise<void> {
+    if (!secretStorage) return;
+    await secretStorage.store(SECRET_KEY, token);
+}
+
+export async function deleteSecretToken(): Promise<void> {
+    if (!secretStorage) return;
+    await secretStorage.delete(SECRET_KEY);
+}
+
 export interface UsageEvent {
     timestamp: number;
     model: string;
@@ -31,21 +53,24 @@ function log(msg: string) {
 }
 
 async function getSessionToken(): Promise<{ userId: string; cookieValue: string } | null> {
-    const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
-    const manualToken = config.get<string>("sessionToken", "");
+    // 优先从本地 Cursor 数据库自动获取
+    const userId = await getUserId();
+    const accessToken = userId ? await getAccessToken() : null;
 
-    if (manualToken) {
-        const userId = manualToken.split("%3A%3A")[0];
-        return { userId, cookieValue: manualToken };
+    if (userId && accessToken) {
+        return { userId, cookieValue: `${userId}%3A%3A${accessToken}` };
     }
 
-    const userId = await getUserId();
-    if (!userId) { log("无法获取 userId"); return null; }
+    // 自动获取失败时，回退到用户手动设置的 token（SecretStorage 加密存储）
+    const manualToken = await getSecretToken();
+    if (manualToken) {
+        log("自动获取失败，使用手动设置的 token");
+        const manualUserId = manualToken.split("%3A%3A")[0];
+        return { userId: manualUserId, cookieValue: manualToken };
+    }
 
-    const accessToken = await getAccessToken();
-    if (!accessToken) { log("无法获取 accessToken"); return null; }
-
-    return { userId, cookieValue: `${userId}%3A%3A${accessToken}` };
+    log("无法获取 Session Token（自动和手动均失败）");
+    return null;
 }
 
 export async function fetchUsage(): Promise<UsageSnapshot | null> {
@@ -61,14 +86,18 @@ export async function fetchUsage(): Promise<UsageSnapshot | null> {
 
     let onDemandSpentDollars = 0;
     let onDemandLimitDollars = 0;
-    let includedUsed = Math.min(gpt4?.numRequests ?? 0, maxRequests);
+    const numRequestsFromUsage = gpt4?.numRequests ?? 0;
+    let includedUsed = Math.min(numRequestsFromUsage, maxRequests);
 
     const teamData = await fetchTeamSpendData(session.cookieValue);
     if (teamData) {
         onDemandSpentDollars = teamData.spentDollars;
         onDemandLimitDollars = teamData.limitDollars;
+        // 取两个来源的较大值，避免某个来源只统计部分请求类型导致计数偏低
         if (teamData.fastPremiumRequests !== undefined) {
-            includedUsed = Math.min(teamData.fastPremiumRequests, maxRequests);
+            const fromTeam = teamData.fastPremiumRequests;
+            log(`Included Requests 数据源对比: /api/usage=${numRequestsFromUsage}, team/fastPremium=${fromTeam}`);
+            includedUsed = Math.min(Math.max(numRequestsFromUsage, fromTeam), maxRequests);
         }
     }
 

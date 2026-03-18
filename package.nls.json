@@ -13,7 +13,6 @@
   "config.pollingInterval": "Polling interval in seconds during AI response (default: 3s)",
   "config.idleInterval": "Idle polling interval in seconds when no AI activity (default: 60s)",
   "config.showTokenDetail": "Show token input/output breakdown for each usage entry",
-  "config.sessionToken": "Manually set Cursor Session Token (format: userId%3A%3AaccessToken). Leave empty for automatic detection",
   "config.alertEnabled": "Enable usage change alerts (popup notification when monitored values exceed thresholds)",
   "config.alertItems": "List of items to monitor: newSession, includedRequests, onDemandSpending, totalTokens",
   "config.alertThreshold.newSession": "Alert when this many new usage requests are detected (default: 1)",
