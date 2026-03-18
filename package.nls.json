@@ -11,7 +11,6 @@
   "config.title": "Cursor Usage Monitor",
   "config.displayCount": "Number of recent usage entries to display in sidebar (default: 5)",
   "config.pollingInterval": "Polling interval in seconds during AI response (default: 3s)",
-  "config.idleInterval": "Idle polling interval in seconds when no AI activity (default: 60s)",
   "config.showTokenDetail": "Show token input/output breakdown for each usage entry",
   "config.alertEnabled": "Enable usage change alerts (popup notification when monitored values exceed thresholds)",
   "config.alertItems": "List of items to monitor: newSession, includedRequests, onDemandSpending, totalTokens",

@@ -41,6 +41,7 @@
   "Current": "当前",
   "Select threshold to configure": "选择要设置的阈值",
   "threshold": "阈值",
+  "threshold (change per {0}s poll cycle)": "阈值（每 {0} 秒轮询周期内的变化量）",
   "Please enter a value between {0} and {1}": "请输入 {0} 到 {1} 之间的值",
   "Threshold updated: {0} = {1}": "阈值已更新：{0} = {1}",
   "All items are already hidden": "所有项目已隐藏",

@@ -455,8 +455,9 @@ export async function activate(context: vscode.ExtensionContext) {
                 const item = thresholdItems.find((t) => t.id === thresholdPick.id)!;
                 const current = config.get<number>(item.configKey, 0);
 
+                const pollingSeconds = config.get<number>("pollingInterval", 3);
                 const input = await vscode.window.showInputBox({
-                    prompt: `${item.label} ${vscode.l10n.t("threshold")} (${item.min}-${item.max})`,
+                    prompt: `${item.label} ${vscode.l10n.t("threshold (change per {0}s poll cycle)", pollingSeconds)} (${item.min}-${item.max})`,
                     value: String(current),
                     validateInput: (v) => {
                         const n = parseFloat(v);

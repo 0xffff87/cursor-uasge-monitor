@@ -20,7 +20,7 @@ TreeView 分为两个主区域：
 - **Included Requests**: 包含请求用量
   - 格式: `已用/上限`（如 `500/500`）
   - 数据来源: `/api/usage` 中 `gpt-4.numRequests` 和 `gpt-4.maxRequestUsage`
-  - 计算方式: `min(numRequests, maxRequestUsage) / maxRequestUsage`
+  - 计算方式: `min(max(numRequests, fastPremiumRequests), maxRequestUsage) / maxRequestUsage`（取两个来源的较大值，避免单一来源漏计）
   - 颜色指示: 绿(<40%) → 黄(40-70%) → 红(>70%)
   - contextValue: `summaryChild_includedRequests`
 
@@ -73,9 +73,8 @@ TreeView 分为两个主区域：
 
 模拟浏览器请求:
 - `Origin: https://cursor.com`
-- `Referer: https://cursor.com/dashboard`
+- `Referer: https://cursor.com/cn/dashboard/usage`
 - `User-Agent: Mozilla/5.0 ...`
-- `Sec-Fetch-Site: same-origin`
 
 ## 功能模块
 
@@ -122,7 +121,6 @@ TreeView 分为两个主区域：
 |--------|------|--------|------|
 | `displayCount` | number | 5 | 最近消耗显示条数 |
 | `pollingInterval` | number | 3 | 轮询间隔（秒） |
-| `idleInterval` | number | 60 | 空闲检查间隔（秒） |
 | `showTokenDetail` | boolean | false | 显示 Token 输入/输出明细 |
 | `sessionToken` | SecretStorage | "" | 手动设置的 Session Token（加密存储，不在 settings.json 中） |
 | `hiddenItems` | string[] | [] | 隐藏的区域和项目（summarySection, recentSection, includedRequests, onDemandUsage） |

@@ -11,7 +11,6 @@
   "config.title": "Cursor 用量监控",
   "config.displayCount": "侧边栏显示的最近用量记录条数（默认 5 条）",
   "config.pollingInterval": "AI 回复过程中的用量轮询间隔（秒，默认 3 秒）",
-  "config.idleInterval": "空闲时的用量检查间隔（秒，默认 60 秒）",
   "config.showTokenDetail": "是否在每条消耗记录中显示 Tokens 输入/输出明细",
   "config.alertEnabled": "启用用量变化提醒（监控值超过阈值时弹窗通知）",
   "config.alertItems": "监控项列表：newSession（新增调用请求）、includedRequests（包含请求）、onDemandSpending（按需花费）、totalTokens（Token总量）",

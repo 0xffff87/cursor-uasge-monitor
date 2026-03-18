@@ -88,6 +88,8 @@ Configure alerts to get notified when usage changes exceed thresholds:
 3. Available monitors: New usage requests, Included Requests, On-Demand spending, Token consumption
 4. All thresholds can be set to 0 (any change triggers alert)
 
+> Thresholds are checked on each poll cycle (every `pollingInterval` seconds). The threshold value represents the **change delta** between two consecutive polls, not a cumulative or absolute value. For example, `onDemandSpending` threshold of `1.0` means an alert triggers when spending increases by $1.00 or more between two consecutive checks.
+
 ### Build from Source
 
 ```bash
@@ -181,6 +183,8 @@ npx @vscode/vsce package --no-dependencies
 2. 开启提醒 → 选择监控项 → 设置阈值
 3. 可监控项：新增调用请求、Included Requests、On-Demand 花费、Token 消耗
 4. 阈值可设为 0（任何变化都会触发提醒）
+
+> 阈值在每次轮询时检查（间隔为 `pollingInterval` 秒）。阈值表示的是**两次轮询之间的变化量**，而非累计值或绝对值。例如 `onDemandSpending` 阈值设为 `1.0`，表示当两次检查之间花费增加了 $1.00 或以上时触发提醒。
 
 ### 从源码构建
 
