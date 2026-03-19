@@ -53,5 +53,8 @@
   "{0} pinned to status bar": "{0} 已固定到状态栏",
   "No items are pinned": "没有固定到状态栏的项目",
   "Select item to unpin from status bar": "选择要从状态栏移除的项目",
-  "{0} unpinned from status bar": "{0} 已从状态栏移除"
+  "{0} unpinned from status bar": "{0} 已从状态栏移除",
+  "✓ Updated": "✓ 已更新",
+  "✗ Failed": "✗ 刷新失败",
+  "Click refresh to retry": "点击刷新重试"
 }

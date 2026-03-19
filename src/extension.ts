@@ -141,7 +141,20 @@ export async function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.commands.registerCommand("cursor-usage-monitor.refresh", () => {
-            tracker.poll(true).catch((err) => console.error("[CursorUsageMonitor] Refresh error:", err));
+            vscode.window.withProgress(
+                { location: { viewId: "cursorUsageView" } },
+                async () => {
+                    try {
+                        await tracker.poll(true);
+                        treeView.description = vscode.l10n.t("✓ Updated");
+                        setTimeout(() => { treeView.description = undefined; }, 2000);
+                    } catch (err) {
+                        treeView.description = vscode.l10n.t("✗ Failed");
+                        setTimeout(() => { treeView.description = undefined; }, 3000);
+                        console.error("[CursorUsageMonitor] Refresh error:", err);
+                    }
+                },
+            );
         }),
     );
 
