@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { fetchUsage, UsageSnapshot } from "./api";
+import { fetchUsage, UsageSnapshot, FetchResult } from "./api";
 
 export interface AlertChange {
     type: "newSession" | "includedRequests" | "onDemandSpending" | "totalTokens";
@@ -11,6 +11,7 @@ const log = vscode.window.createOutputChannel("Cursor Usage Monitor - Tracker");
 
 export class UsageTracker {
     private _lastSnapshot: UsageSnapshot | null = null;
+    private _lastError: string | null = null;
     private _onUpdate: (() => void) | null = null;
     private _onAlert: ((alerts: AlertChange[]) => void) | null = null;
     private _polling = false;
@@ -28,6 +29,10 @@ export class UsageTracker {
         return this._lastSnapshot;
     }
 
+    get lastError(): string | null {
+        return this._lastError;
+    }
+
     async poll(force = false): Promise<boolean> {
         this._pollCount++;
         const pollId = this._pollCount;
@@ -42,17 +47,20 @@ export class UsageTracker {
 
         try {
             const startTime = Date.now();
-            const snapshot = await fetchUsage();
+            const result = await fetchUsage();
             const elapsed = Date.now() - startTime;
+            const snapshot = result.snapshot;
 
             if (!snapshot) {
-                log.appendLine(`[${ts}] poll#${pollId} fetchUsage 返回 null (耗时 ${elapsed}ms)`);
-                if (force && this._onUpdate) {
+                this._lastError = result.error;
+                log.appendLine(`[${ts}] poll#${pollId} fetchUsage 失败: ${result.error} (耗时 ${elapsed}ms)`);
+                if (this._onUpdate) {
                     this._onUpdate();
                 }
                 return false;
             }
 
+            this._lastError = null;
             log.appendLine(`[${ts}] poll#${pollId} fetchUsage 成功 (耗时 ${elapsed}ms)`);
             log.appendLine(`  当前数据: events=${snapshot.events.length}, included=${snapshot.includedUsed}/${snapshot.includedLimit}, onDemand=$${snapshot.onDemandSpentDollars.toFixed(2)}`);
             if (snapshot.events.length > 0) {

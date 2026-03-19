@@ -162,12 +162,23 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
         }
 
         if (items.length === 0) {
-            const loadingItem = new UsageTreeItem(
-                vscode.l10n.t("Loading..."),
-                vscode.TreeItemCollapsibleState.None,
-            );
-            loadingItem.iconPath = new vscode.ThemeIcon("sync~spin");
-            items.push(loadingItem);
+            const error = this.tracker.lastError;
+            if (error) {
+                const errorItem = new UsageTreeItem(
+                    `⚠️ ${error}`,
+                    vscode.TreeItemCollapsibleState.None,
+                );
+                errorItem.iconPath = new vscode.ThemeIcon("warning", new vscode.ThemeColor("charts.red"));
+                errorItem.tooltip = vscode.l10n.t("Click refresh to retry");
+                items.push(errorItem);
+            } else {
+                const loadingItem = new UsageTreeItem(
+                    vscode.l10n.t("Loading..."),
+                    vscode.TreeItemCollapsibleState.None,
+                );
+                loadingItem.iconPath = new vscode.ThemeIcon("sync~spin");
+                items.push(loadingItem);
+            }
         }
 
         return items;

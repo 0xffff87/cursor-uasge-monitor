@@ -73,12 +73,17 @@ async function getSessionToken(): Promise<{ userId: string; cookieValue: string 
     return null;
 }
 
-export async function fetchUsage(): Promise<UsageSnapshot | null> {
+export interface FetchResult {
+    snapshot: UsageSnapshot | null;
+    error: string | null;
+}
+
+export async function fetchUsage(): Promise<FetchResult> {
     const session = await getSessionToken();
-    if (!session) return null;
+    if (!session) return { snapshot: null, error: "无法获取 Session Token" };
 
     const usageData = await httpGet(`https://cursor.com/api/usage?user=${session.userId}`, session.cookieValue);
-    if (!usageData) { log("获取 /api/usage 失败"); return null; }
+    if (!usageData) { log("获取 /api/usage 失败"); return { snapshot: null, error: "获取 /api/usage 失败" }; }
 
     const gpt4 = usageData["gpt-4"];
     const maxRequests = gpt4?.maxRequestUsage ?? 500;
@@ -87,18 +92,22 @@ export async function fetchUsage(): Promise<UsageSnapshot | null> {
     let onDemandSpentDollars = 0;
     let onDemandLimitDollars = 0;
     const numRequestsFromUsage = gpt4?.numRequests ?? 0;
-    let includedUsed = Math.min(numRequestsFromUsage, maxRequests);
+    // numRequests 包含所有类型请求，仅在无团队数据时使用
+    let includedUsed = numRequestsFromUsage;
 
     const teamData = await fetchTeamSpendData(session.cookieValue);
     if (teamData) {
         onDemandSpentDollars = teamData.spentDollars;
         onDemandLimitDollars = teamData.limitDollars;
-        // 取两个来源的较大值，避免某个来源只统计部分请求类型导致计数偏低
-        if (teamData.fastPremiumRequests !== undefined) {
-            const fromTeam = teamData.fastPremiumRequests;
-            log(`Included Requests 数据源对比: /api/usage=${numRequestsFromUsage}, team/fastPremium=${fromTeam}`);
-            includedUsed = Math.min(Math.max(numRequestsFromUsage, fromTeam), maxRequests);
+        // 优先使用 fastPremiumRequests（仅计算 premium 请求，与官网一致）
+        if (typeof teamData.fastPremiumRequests === "number") {
+            log(`Included Requests 数据源: 使用 team/fastPremium=${teamData.fastPremiumRequests} (numRequests=${numRequestsFromUsage} 包含非 premium 请求)`);
+            includedUsed = teamData.fastPremiumRequests;
+        } else {
+            log(`Included Requests 数据源: fastPremiumRequests 不可用，回退到 numRequests=${numRequestsFromUsage}`);
         }
+    } else {
+        log(`Included Requests 数据源: 团队数据获取失败，使用 numRequests=${numRequestsFromUsage}`);
     }
 
     const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
@@ -106,13 +115,16 @@ export async function fetchUsage(): Promise<UsageSnapshot | null> {
     const events = await fetchUsageEvents(session.cookieValue, displayCount);
 
     return {
-        timestamp: new Date(),
-        includedUsed,
-        includedLimit: maxRequests,
-        onDemandSpentDollars,
-        onDemandLimitDollars,
-        startOfMonth,
-        events,
+        snapshot: {
+            timestamp: new Date(),
+            includedUsed,
+            includedLimit: maxRequests,
+            onDemandSpentDollars,
+            onDemandLimitDollars,
+            startOfMonth,
+            events,
+        },
+        error: null,
     };
 }
 
@@ -189,7 +201,11 @@ function httpPost(url: string, body: any, cookieValue: string, retryOnAuth = tru
 
 function makeRequest(method: string, url: string, body: any | null, cookieValue: string, retryOnAuth: boolean, redirectCount = 0): Promise<any | null> {
     return new Promise((resolve) => {
-        if (redirectCount > 5) { resolve(null); return; }
+        if (redirectCount > 5) {
+            log(`${method} ${url} 重定向次数超过上限`);
+            resolve(null);
+            return;
+        }
 
         const urlObj = new URL(url);
         const postData = body ? JSON.stringify(body) : null;
@@ -212,21 +228,26 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
         const req = https.request(options, (res) => {
             req.removeAllListeners("timeout");
             if (res.statusCode === 401) {
+                log(`${method} ${url} → 401 认证失败，清除缓存 token 并重试`);
                 clearCachedToken();
                 if (retryOnAuth) { retryRequest(method, url, body).then(resolve); }
-                else { resolve(null); }
+                else { log(`${method} ${url} → 401 重试后仍失败`); resolve(null); }
                 return;
             }
 
             if (res.statusCode && res.statusCode >= 400) {
                 let errData = "";
                 res.on("data", (chunk) => { errData += chunk; });
-                res.on("end", () => { resolve(null); });
+                res.on("end", () => {
+                    log(`${method} ${url} → HTTP ${res.statusCode}: ${errData.substring(0, 500)}`);
+                    resolve(null);
+                });
                 return;
             }
 
             if (res.statusCode && [301, 302, 307, 308].includes(res.statusCode)) {
                 const location = res.headers.location;
+                log(`${method} ${url} → ${res.statusCode} 重定向到 ${location || "(无 location)"}`);
                 if (location) {
                     const redirectUrl = location.startsWith("http") ? location : `https://cursor.com${location}`;
                     makeRequest(method, redirectUrl, body, cookieValue, retryOnAuth, redirectCount + 1).then(resolve);
@@ -238,12 +259,22 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
             res.on("data", (chunk) => { data += chunk; });
             res.on("end", () => {
                 try { resolve(JSON.parse(data)); }
-                catch { resolve(null); }
+                catch {
+                    log(`${method} ${url} → HTTP ${res.statusCode} JSON 解析失败: ${data.substring(0, 200)}`);
+                    resolve(null);
+                }
             });
         });
 
-        req.on("error", () => resolve(null));
-        req.setTimeout(30000, () => { req.destroy(); resolve(null); });
+        req.on("error", (err) => {
+            log(`${method} ${url} → 网络错误: ${err.message}`);
+            resolve(null);
+        });
+        req.setTimeout(30000, () => {
+            log(`${method} ${url} → 请求超时 (30s)`);
+            req.destroy();
+            resolve(null);
+        });
         if (postData) { req.write(postData); }
         req.end();
     });
