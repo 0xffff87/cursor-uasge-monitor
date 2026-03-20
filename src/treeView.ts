@@ -177,9 +177,9 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
         if (error && items.length > 0) {
             const failures = this.tracker.consecutiveFailures;
             const lastSuccess = this.tracker.lastSuccessTime;
-            let errorText = `⚠️ ${error}`;
+            let errorText = error;
             if (failures > 1) {
-                errorText = `⚠️ ${vscode.l10n.t("API unavailable (failed {0} times)", failures)}`;
+                errorText = vscode.l10n.t("API unavailable (failed {0} times)", failures);
             }
             const errorItem = new UsageTreeItem(
                 errorText,
@@ -196,7 +196,7 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
         } else if (items.length === 0) {
             if (error) {
                 const errorItem = new UsageTreeItem(
-                    `⚠️ ${error}`,
+                    error,
                     vscode.TreeItemCollapsibleState.None,
                 );
                 errorItem.iconPath = new vscode.ThemeIcon("warning", new vscode.ThemeColor("charts.red"));
