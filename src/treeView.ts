@@ -90,6 +90,11 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
                 vscode.TreeItemCollapsibleState.Expanded,
             );
             recentItem.contextValue = "recentSection";
+            // 事件 API 失败时在标题上添加提示（使用缓存数据）
+            if (this.tracker.eventsError) {
+                recentItem.description = vscode.l10n.t("(cached)");
+                recentItem.tooltip = vscode.l10n.t("Events API failed, showing cached data");
+            }
 
             recentItem.children = visibleEvents.map((e) => {
                 const timeStr = formatEventTime(e.timestamp);
@@ -157,19 +162,49 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
                 `📋 ${vscode.l10n.t("Recent Usage")}`,
                 vscode.TreeItemCollapsibleState.None,
             );
-            noEventsItem.description = vscode.l10n.t("No data");
+            if (this.tracker.eventsError) {
+                noEventsItem.description = vscode.l10n.t("Failed to fetch");
+                noEventsItem.iconPath = new vscode.ThemeIcon("warning", new vscode.ThemeColor("charts.yellow"));
+                noEventsItem.tooltip = vscode.l10n.t("Events API is unavailable, click refresh to retry");
+            } else {
+                noEventsItem.description = vscode.l10n.t("No data");
+            }
             items.push(noEventsItem);
         }
 
-        if (items.length === 0) {
-            const error = this.tracker.lastError;
+        // 有缓存数据时也显示错误横幅（API 获取失败，正在使用缓存）
+        const error = this.tracker.lastError;
+        if (error && items.length > 0) {
+            const failures = this.tracker.consecutiveFailures;
+            const lastSuccess = this.tracker.lastSuccessTime;
+            let errorText = `⚠️ ${error}`;
+            if (failures > 1) {
+                errorText = `⚠️ ${vscode.l10n.t("API unavailable (failed {0} times)", failures)}`;
+            }
+            const errorItem = new UsageTreeItem(
+                errorText,
+                vscode.TreeItemCollapsibleState.None,
+            );
+            errorItem.iconPath = new vscode.ThemeIcon("warning", new vscode.ThemeColor("charts.red"));
+            let tooltipLines = [vscode.l10n.t("Click refresh to retry")];
+            if (lastSuccess) {
+                tooltipLines.push(vscode.l10n.t("Last success: {0}", formatTime(lastSuccess)));
+            }
+            tooltipLines.push(vscode.l10n.t("Troubleshooting: Check network or try setting token manually"));
+            errorItem.tooltip = tooltipLines.join("\n");
+            items.unshift(errorItem);
+        } else if (items.length === 0) {
             if (error) {
                 const errorItem = new UsageTreeItem(
                     `⚠️ ${error}`,
                     vscode.TreeItemCollapsibleState.None,
                 );
                 errorItem.iconPath = new vscode.ThemeIcon("warning", new vscode.ThemeColor("charts.red"));
-                errorItem.tooltip = vscode.l10n.t("Click refresh to retry");
+                const tooltipLines = [
+                    vscode.l10n.t("Click refresh to retry"),
+                    vscode.l10n.t("Troubleshooting: Check network or try setting token manually"),
+                ];
+                errorItem.tooltip = tooltipLines.join("\n");
                 items.push(errorItem);
             } else {
                 const loadingItem = new UsageTreeItem(
@@ -235,4 +270,11 @@ function getDollarIcon(pct: number): vscode.ThemeIcon {
     if (pct < 0.3) return new vscode.ThemeIcon("circle-filled", new vscode.ThemeColor("charts.green"));
     if (pct < 0.6) return new vscode.ThemeIcon("circle-filled", new vscode.ThemeColor("charts.yellow"));
     return new vscode.ThemeIcon("circle-filled", new vscode.ThemeColor("charts.red"));
+}
+
+function formatTime(date: Date): string {
+    const h = String(date.getHours()).padStart(2, "0");
+    const m = String(date.getMinutes()).padStart(2, "0");
+    const s = String(date.getSeconds()).padStart(2, "0");
+    return `${h}:${m}:${s}`;
 }

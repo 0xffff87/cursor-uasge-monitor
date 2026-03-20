@@ -76,14 +76,15 @@ async function getSessionToken(): Promise<{ userId: string; cookieValue: string 
 export interface FetchResult {
     snapshot: UsageSnapshot | null;
     error: string | null;
+    eventsError: boolean;
 }
 
 export async function fetchUsage(): Promise<FetchResult> {
     const session = await getSessionToken();
-    if (!session) return { snapshot: null, error: "无法获取 Session Token" };
+    if (!session) return { snapshot: null, error: "无法获取 Session Token", eventsError: false };
 
     const usageData = await httpGet(`https://cursor.com/api/usage?user=${session.userId}`, session.cookieValue);
-    if (!usageData) { log("获取 /api/usage 失败"); return { snapshot: null, error: "获取 /api/usage 失败" }; }
+    if (!usageData) { log("获取 /api/usage 失败"); return { snapshot: null, error: "获取 /api/usage 失败", eventsError: false }; }
 
     const gpt4 = usageData["gpt-4"];
     const maxRequests = gpt4?.maxRequestUsage ?? 500;
@@ -112,7 +113,7 @@ export async function fetchUsage(): Promise<FetchResult> {
 
     const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
     const displayCount = config.get<number>("displayCount", 5);
-    const events = await fetchUsageEvents(session.cookieValue, displayCount);
+    const eventsResult = await fetchUsageEvents(session.cookieValue, displayCount);
 
     return {
         snapshot: {
@@ -122,13 +123,14 @@ export async function fetchUsage(): Promise<FetchResult> {
             onDemandSpentDollars,
             onDemandLimitDollars,
             startOfMonth,
-            events,
+            events: eventsResult.events,
         },
         error: null,
+        eventsError: eventsResult.error,
     };
 }
 
-async function fetchUsageEvents(cookieValue: string, count: number): Promise<UsageEvent[]> {
+async function fetchUsageEvents(cookieValue: string, count: number): Promise<{ events: UsageEvent[]; error: boolean }> {
     const now = Date.now();
     const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
 
@@ -140,12 +142,12 @@ async function fetchUsageEvents(cookieValue: string, count: number): Promise<Usa
 
     if (!data || !data.usageEventsDisplay) {
         log("get-filtered-usage-events 无数据");
-        return [];
+        return { events: [], error: true };
     }
 
     log(`获取到 ${data.usageEventsDisplay.length} 条用量事件 (总计 ${data.totalUsageEventsCount})`);
 
-    return data.usageEventsDisplay.map((e: any) => {
+    const events = data.usageEventsDisplay.map((e: any) => {
         const tok = e.tokenUsage || {};
         const totalTokens = (tok.inputTokens || 0) + (tok.outputTokens || 0)
             + (tok.cacheWriteTokens || 0) + (tok.cacheReadTokens || 0);
@@ -161,6 +163,7 @@ async function fetchUsageEvents(cookieValue: string, count: number): Promise<Usa
             usageBasedCosts: e.usageBasedCosts || "",
         };
     });
+    return { events, error: false };
 }
 
 interface TeamSpendResult {
@@ -199,7 +202,7 @@ function httpPost(url: string, body: any, cookieValue: string, retryOnAuth = tru
     return makeRequest("POST", url, body, cookieValue, retryOnAuth);
 }
 
-function makeRequest(method: string, url: string, body: any | null, cookieValue: string, retryOnAuth: boolean, redirectCount = 0): Promise<any | null> {
+function makeRequest(method: string, url: string, body: any | null, cookieValue: string, retryOnAuth: boolean, redirectCount = 0, serverRetryCount = 0): Promise<any | null> {
     return new Promise((resolve) => {
         if (redirectCount > 5) {
             log(`${method} ${url} 重定向次数超过上限`);
@@ -240,7 +243,16 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
                 res.on("data", (chunk) => { errData += chunk; });
                 res.on("end", () => {
                     log(`${method} ${url} → HTTP ${res.statusCode}: ${errData.substring(0, 500)}`);
-                    resolve(null);
+                    // 5xx 服务器错误自动重试（最多 2 次，间隔 3 秒）
+                    if (res.statusCode! >= 500 && serverRetryCount < 2) {
+                        const delay = (serverRetryCount + 1) * 3000;
+                        log(`${method} ${url} → 服务器错误，${delay / 1000}s 后第 ${serverRetryCount + 1} 次重试`);
+                        setTimeout(() => {
+                            makeRequest(method, url, body, cookieValue, retryOnAuth, 0, serverRetryCount + 1).then(resolve);
+                        }, delay);
+                    } else {
+                        resolve(null);
+                    }
                 });
                 return;
             }
@@ -250,7 +262,7 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
                 log(`${method} ${url} → ${res.statusCode} 重定向到 ${location || "(无 location)"}`);
                 if (location) {
                     const redirectUrl = location.startsWith("http") ? location : `https://cursor.com${location}`;
-                    makeRequest(method, redirectUrl, body, cookieValue, retryOnAuth, redirectCount + 1).then(resolve);
+                    makeRequest(method, redirectUrl, body, cookieValue, retryOnAuth, redirectCount + 1, serverRetryCount).then(resolve);
                 } else { resolve(null); }
                 return;
             }

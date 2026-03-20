@@ -12,6 +12,9 @@ const log = vscode.window.createOutputChannel("Cursor Usage Monitor - Tracker");
 export class UsageTracker {
     private _lastSnapshot: UsageSnapshot | null = null;
     private _lastError: string | null = null;
+    private _eventsError = false;
+    private _consecutiveFailures = 0;
+    private _lastSuccessTime: Date | null = null;
     private _onUpdate: (() => void) | null = null;
     private _onAlert: ((alerts: AlertChange[]) => void) | null = null;
     private _polling = false;
@@ -31,6 +34,18 @@ export class UsageTracker {
 
     get lastError(): string | null {
         return this._lastError;
+    }
+
+    get eventsError(): boolean {
+        return this._eventsError;
+    }
+
+    get consecutiveFailures(): number {
+        return this._consecutiveFailures;
+    }
+
+    get lastSuccessTime(): Date | null {
+        return this._lastSuccessTime;
     }
 
     async poll(force = false): Promise<boolean> {
@@ -53,7 +68,8 @@ export class UsageTracker {
 
             if (!snapshot) {
                 this._lastError = result.error;
-                log.appendLine(`[${ts}] poll#${pollId} fetchUsage 失败: ${result.error} (耗时 ${elapsed}ms)`);
+                this._consecutiveFailures++;
+                log.appendLine(`[${ts}] poll#${pollId} fetchUsage 失败: ${result.error} (耗时 ${elapsed}ms, 连续失败 ${this._consecutiveFailures} 次)`);
                 if (this._onUpdate) {
                     this._onUpdate();
                 }
@@ -61,6 +77,17 @@ export class UsageTracker {
             }
 
             this._lastError = null;
+            this._consecutiveFailures = 0;
+            this._lastSuccessTime = new Date();
+            const prevEventsError = this._eventsError;
+            this._eventsError = result.eventsError;
+
+            // 事件 API 失败时，保留上次成功获取的事件数据
+            if (result.eventsError && snapshot.events.length === 0 && this._lastSnapshot && this._lastSnapshot.events.length > 0) {
+                log.appendLine(`[${ts}] poll#${pollId} 事件 API 失败，保留上次 ${this._lastSnapshot.events.length} 条事件数据`);
+                snapshot.events = this._lastSnapshot.events;
+            }
+
             log.appendLine(`[${ts}] poll#${pollId} fetchUsage 成功 (耗时 ${elapsed}ms)`);
             log.appendLine(`  当前数据: events=${snapshot.events.length}, included=${snapshot.includedUsed}/${snapshot.includedLimit}, onDemand=$${snapshot.onDemandSpentDollars.toFixed(2)}`);
             if (snapshot.events.length > 0) {
@@ -106,7 +133,7 @@ export class UsageTracker {
             }
 
             if (prev && changed) {
-                this.checkAlerts(prev, snapshot);
+                this.checkAlerts(prev, snapshot, prevEventsError);
             }
 
             this._lastSnapshot = snapshot;
@@ -132,7 +159,7 @@ export class UsageTracker {
         }
     }
 
-    private checkAlerts(prev: UsageSnapshot, curr: UsageSnapshot): void {
+    private checkAlerts(prev: UsageSnapshot, curr: UsageSnapshot, prevEventsError: boolean): void {
         const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
         const enabled = config.get<boolean>("alertEnabled", false);
         if (!enabled) return;
@@ -140,7 +167,8 @@ export class UsageTracker {
         const items = config.get<string[]>("alertItems", ["newSession"]);
         const alerts: AlertChange[] = [];
 
-        if (items.includes("newSession")) {
+        // 上次事件数据不可靠（API 失败/缓存）时，跳过事件相关的提醒，避免误报
+        if (items.includes("newSession") && !prevEventsError) {
             // 通过比较 timestamp 识别新事件，而非数组长度（因为 API 返回数量受 displayCount 限制，长度可能不变）
             const prevTimestamps = new Set(prev.events.map(e => e.timestamp));
             const newCount = curr.events.filter(e => !prevTimestamps.has(e.timestamp)).length;
@@ -166,7 +194,7 @@ export class UsageTracker {
             }
         }
 
-        if (items.includes("totalTokens")) {
+        if (items.includes("totalTokens") && !prevEventsError) {
             // 只比较两次快照中都存在的事件（通过 timestamp 匹配），排除新增事件对 token 总量的影响
             const prevMap = new Map(prev.events.map(e => [e.timestamp, e.totalTokens]));
             let prevTokens = 0;

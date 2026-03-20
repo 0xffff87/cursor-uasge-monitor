@@ -56,5 +56,12 @@
   "{0} unpinned from status bar": "{0} 已从状态栏移除",
   "✓ Updated": "✓ 已更新",
   "✗ Failed": "✗ 刷新失败",
-  "Click refresh to retry": "点击刷新重试"
+  "Click refresh to retry": "点击刷新重试",
+  "(cached)": "（缓存）",
+  "Events API failed, showing cached data": "事件接口获取失败，显示缓存数据",
+  "Failed to fetch": "获取失败",
+  "Events API is unavailable, click refresh to retry": "事件接口暂不可用，点击刷新重试",
+  "API unavailable (failed {0} times)": "API 暂不可用（已连续失败 {0} 次）",
+  "Last success: {0}": "上次成功: {0}",
+  "Troubleshooting: Check network or try setting token manually": "排查建议：检查网络连接，或尝试手动设置 Token"
 }
