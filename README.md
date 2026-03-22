@@ -20,6 +20,7 @@ A VS Code / Cursor IDE extension that displays your Cursor AI usage directly in 
 - **Status Bar** — Pin items to the bottom status bar for always-visible monitoring
 - **Usage Alerts** — Configurable notifications when usage changes exceed thresholds
 - **i18n** — Full English and Chinese (Simplified) localization
+- **Remote development** — Declared as a UI extension (`extensionKind: ui`) so it runs on your **local** machine and can still read your Cursor session when the workspace is on **SSH Remote**, WSL, or Dev Containers
 
 ### Installation
 
@@ -39,6 +40,8 @@ The extension attempts to automatically detect your Cursor session from local co
 To find your token: Open browser DevTools on [cursor.com](https://cursor.com), go to Application → Cookies, and copy the `WorkosCursorSessionToken` value.
 
 > **Upgrade note**: If you previously stored your token in `settings.json`, it will be automatically migrated to SecretStorage and removed from `settings.json` on first launch.
+
+**Remote SSH, WSL, and Dev Containers:** From v1.1.8, this extension is a **UI extension**. It runs in the **local** Cursor/VS Code process (where your Cursor login and `state.vscdb` live), not on the remote host. Install the extension in your **local** Cursor/VS Code; you do not need to install it on the remote server for auto session detection to work. If automatic detection still fails, use the **key icon** to paste `WorkosCursorSessionToken` as usual.
 
 ### Configuration
 
@@ -116,6 +119,7 @@ npx @vscode/vsce package --no-dependencies
 - **状态栏固定** — 将项目固定到底部状态栏，不占用项目树空间
 - **用量提醒** — 可配置的通知，当用量变化超过阈值时弹窗提醒
 - **国际化** — 完整的中英文本地化支持
+- **远程开发** — 声明为 UI 类扩展（`extensionKind: ui`），在**本机**运行，工作区在 **SSH Remote**、WSL 或 Dev Containers 时仍能读取本机 Cursor 登录状态
 
 ### 安装方法
 
@@ -135,6 +139,8 @@ npx @vscode/vsce package --no-dependencies
 获取方法：浏览器打开 [cursor.com](https://cursor.com) → F12 → Application → Cookies → 复制 `WorkosCursorSessionToken`。
 
 > **升级说明**：如果你之前在 `settings.json` 中存储了 Token，插件首次启动时会自动将其迁移到 SecretStorage 并从 `settings.json` 中删除明文记录。
+
+**SSH Remote、WSL、Dev Containers：**从 **v1.1.8** 起，本扩展为 **UI 扩展**，在**本机** Cursor/VS Code 进程中运行（与 Cursor 登录与 `state.vscdb` 所在环境一致），而不是在远程 Extension Host 中。请在**本机**安装扩展；自动读取会话**无需**在远程服务器再装一份。若仍无法自动检测，请照常使用标题栏 **钥匙** 手动粘贴 `WorkosCursorSessionToken`。
 
 ### 配置项
 
@@ -204,9 +210,19 @@ npx @vscode/vsce package --no-dependencies
 
 - Set `extensionKind` to `ui` so the extension runs in the local UI extension host. This fixes session auto-detection when using Remote SSH (the remote host has no local Cursor `state.vscdb`).
 
+**Changes**
+
+- Documented Remote SSH / WSL / Dev Containers behavior in README: install the extension locally; credential auto-detection uses the local Cursor data path.
+- Recommended workflow: use **Cursor: Install from VSIX** or `cursor --install-extension path/to.vsix` on the **local** machine when using remote workspaces.
+
 **修复**
 
 - 将 `extensionKind` 设为 `ui`，使扩展在本地 UI 扩展宿主中运行，修复 SSH Remote 等场景下无法读取本机 Cursor 会话、自动获取凭证失败的问题。
+
+**变更**
+
+- README 补充远程开发说明：SSH / WSL / Dev Containers 下请在**本机**安装扩展；自动读取会话依赖本机 Cursor 数据路径。
+- 建议通过本机 **从 VSIX 安装** 或命令行 `cursor --install-extension xxx.vsix` 安装远程工作区场景下的扩展。
 
 ### v1.1.0
 
