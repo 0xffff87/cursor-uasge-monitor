@@ -198,6 +198,16 @@ npx @vscode/vsce package --no-dependencies
 
 ## Changelog / 更新日志
 
+### v1.1.8
+
+**Bug Fixes**
+
+- Set `extensionKind` to `ui` so the extension runs in the local UI extension host. This fixes session auto-detection when using Remote SSH (the remote host has no local Cursor `state.vscdb`).
+
+**修复**
+
+- 将 `extensionKind` 设为 `ui`，使扩展在本地 UI 扩展宿主中运行，修复 SSH Remote 等场景下无法读取本机 Cursor 会话、自动获取凭证失败的问题。
+
 ### v1.1.0
 
 **Bug Fixes**

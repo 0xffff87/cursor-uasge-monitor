@@ -2,7 +2,7 @@
   "name": "cursor-usage-monitor",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "publisher": "kso",
   "license": "MIT",
   "icon": "icon.png",
@@ -18,6 +18,9 @@
   ],
   "activationEvents": [
     "onStartupFinished"
+  ],
+  "extensionKind": [
+    "ui"
   ],
   "main": "./out/extension.js",
   "l10n": "./l10n",
