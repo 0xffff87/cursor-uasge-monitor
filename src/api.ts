@@ -210,6 +210,13 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
             return;
         }
 
+        let settled = false;
+        const safeResolve = (value: any | null) => {
+            if (settled) return;
+            settled = true;
+            resolve(value);
+        };
+
         const urlObj = new URL(url);
         const postData = body ? JSON.stringify(body) : null;
 
@@ -229,12 +236,15 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
         };
 
         const req = https.request(options, (res) => {
-            req.removeAllListeners("timeout");
+            // 为响应体读取重新设置超时（不移除监听器，防止响应体读取挂起导致 Promise 永不 resolve）
+            req.setTimeout(30000);
+
             if (res.statusCode === 401) {
+                res.resume();
                 log(`${method} ${url} → 401 认证失败，清除缓存 token 并重试`);
                 clearCachedToken();
-                if (retryOnAuth) { retryRequest(method, url, body).then(resolve); }
-                else { log(`${method} ${url} → 401 重试后仍失败`); resolve(null); }
+                if (retryOnAuth) { retryRequest(method, url, body).then(safeResolve); }
+                else { log(`${method} ${url} → 401 重试后仍失败`); safeResolve(null); }
                 return;
             }
 
@@ -248,44 +258,45 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
                         const delay = (serverRetryCount + 1) * 3000;
                         log(`${method} ${url} → 服务器错误，${delay / 1000}s 后第 ${serverRetryCount + 1} 次重试`);
                         setTimeout(() => {
-                            makeRequest(method, url, body, cookieValue, retryOnAuth, 0, serverRetryCount + 1).then(resolve);
+                            makeRequest(method, url, body, cookieValue, retryOnAuth, 0, serverRetryCount + 1).then(safeResolve);
                         }, delay);
                     } else {
-                        resolve(null);
+                        safeResolve(null);
                     }
                 });
                 return;
             }
 
             if (res.statusCode && [301, 302, 307, 308].includes(res.statusCode)) {
+                res.resume();
                 const location = res.headers.location;
                 log(`${method} ${url} → ${res.statusCode} 重定向到 ${location || "(无 location)"}`);
                 if (location) {
                     const redirectUrl = location.startsWith("http") ? location : `https://cursor.com${location}`;
-                    makeRequest(method, redirectUrl, body, cookieValue, retryOnAuth, redirectCount + 1, serverRetryCount).then(resolve);
-                } else { resolve(null); }
+                    makeRequest(method, redirectUrl, body, cookieValue, retryOnAuth, redirectCount + 1, serverRetryCount).then(safeResolve);
+                } else { safeResolve(null); }
                 return;
             }
 
             let data = "";
             res.on("data", (chunk) => { data += chunk; });
             res.on("end", () => {
-                try { resolve(JSON.parse(data)); }
+                try { safeResolve(JSON.parse(data)); }
                 catch {
                     log(`${method} ${url} → HTTP ${res.statusCode} JSON 解析失败: ${data.substring(0, 200)}`);
-                    resolve(null);
+                    safeResolve(null);
                 }
             });
         });
 
         req.on("error", (err) => {
             log(`${method} ${url} → 网络错误: ${err.message}`);
-            resolve(null);
+            safeResolve(null);
         });
         req.setTimeout(30000, () => {
             log(`${method} ${url} → 请求超时 (30s)`);
             req.destroy();
-            resolve(null);
+            safeResolve(null);
         });
         if (postData) { req.write(postData); }
         req.end();

@@ -18,6 +18,7 @@ export class UsageTracker {
     private _onUpdate: (() => void) | null = null;
     private _onAlert: ((alerts: AlertChange[]) => void) | null = null;
     private _polling = false;
+    private _pollStartTime = 0;
     private _pollCount = 0;
 
     set onUpdate(callback: (() => void) | null) {
@@ -54,15 +55,29 @@ export class UsageTracker {
         const ts = new Date().toISOString();
 
         if (this._polling) {
-            log.appendLine(`[${ts}] poll#${pollId} SKIPPED (上一次轮询仍在进行中)`);
-            return false;
+            const elapsed = Date.now() - this._pollStartTime;
+            // 防止轮询卡死：超过 120 秒强制重置
+            if (elapsed > 120000) {
+                log.appendLine(`[${ts}] poll#${pollId} 上次轮询已运行 ${Math.round(elapsed / 1000)}s，强制重置 _polling`);
+                this._polling = false;
+            } else {
+                log.appendLine(`[${ts}] poll#${pollId} SKIPPED (上一次轮询仍在进行中, 已运行 ${Math.round(elapsed / 1000)}s)`);
+                return false;
+            }
         }
         this._polling = true;
+        this._pollStartTime = Date.now();
         log.appendLine(`[${ts}] poll#${pollId} 开始 (force=${force})`);
 
         try {
             const startTime = Date.now();
-            const result = await fetchUsage();
+            const POLL_TIMEOUT = 90000;
+            const result = await Promise.race([
+                fetchUsage(),
+                new Promise<FetchResult>((resolve) =>
+                    setTimeout(() => resolve({ snapshot: null, error: "数据获取超时", eventsError: false }), POLL_TIMEOUT)
+                ),
+            ]);
             const elapsed = Date.now() - startTime;
             const snapshot = result.snapshot;
 
