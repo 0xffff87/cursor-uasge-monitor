@@ -204,7 +204,7 @@ npx @vscode/vsce package --no-dependencies
 
 ## Changelog / 更新日志
 
-### v1.1.9
+### v1.2.0
 
 **Bug Fixes**
 
