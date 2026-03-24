@@ -1,6 +1,9 @@
 {
   "Monthly Summary": "本月汇总",
   "Monthly Summary (Reset in: {0} days)": "本月汇总（重置倒计时：{0}天）",
+  "Monthly Summary (Reset in: {0})": "本月汇总（重置倒计时：{0}）",
+  "{0}d {1}h": "{0}天{1}小时",
+  "{0}h": "{0}小时",
   "Recent Usage ({0} entries)": "最近消耗 ({0} 条)",
   "Recent Usage": "最近消耗",
   "No data": "暂无数据",

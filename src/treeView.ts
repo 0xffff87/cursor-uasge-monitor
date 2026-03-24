@@ -35,8 +35,17 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
                 const resetDate = new Date(snapshot.startOfMonth);
                 const nextReset = new Date(resetDate);
                 nextReset.setMonth(nextReset.getMonth() + 1);
-                const daysLeft = Math.ceil((nextReset.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-                summaryLabel = `📊 ${vscode.l10n.t("Monthly Summary (Reset in: {0} days)", daysLeft)}`;
+                const msLeft = nextReset.getTime() - Date.now();
+                const totalHours = Math.max(0, Math.ceil(msLeft / (1000 * 60 * 60)));
+                const days = Math.floor(totalHours / 24);
+                const hours = totalHours % 24;
+                let countdownStr: string;
+                if (days > 0) {
+                    countdownStr = vscode.l10n.t("{0}d {1}h", days, hours);
+                } else {
+                    countdownStr = vscode.l10n.t("{0}h", hours);
+                }
+                summaryLabel = `📊 ${vscode.l10n.t("Monthly Summary (Reset in: {0})", countdownStr)}`;
             } else {
                 summaryLabel = `📊 ${vscode.l10n.t("Monthly Summary")}`;
             }

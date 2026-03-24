@@ -60,7 +60,7 @@ To find your token: Open browser DevTools on [cursor.com](https://cursor.com), g
 ### Sidebar Display
 
 ```
-📊 Monthly Summary (Reset in: 8 days)
+📊 Monthly Summary (Reset in: 8d 12h)
   ├── Included Requests    500/500
   └── On-Demand Usage      $37.20/$200
 
@@ -159,7 +159,7 @@ npx @vscode/vsce package --no-dependencies
 ### 侧边栏显示效果
 
 ```
-📊 本月汇总（重置倒计时：8天）
+📊 本月汇总（重置倒计时：8天12小时）
   ├── Included Requests    500/500
   └── On-Demand Usage      $37.20/$200
 
@@ -203,6 +203,32 @@ npx @vscode/vsce package --no-dependencies
 ---
 
 ## Changelog / 更新日志
+
+### v1.1.9
+
+**Bug Fixes**
+
+- Fixed polling getting permanently stuck after long idle periods: `_polling` flag would stay `true` forever when HTTP response body reading hangs (e.g., network drops mid-transfer, machine sleep). Root cause: the socket timeout listener was removed after receiving response headers, leaving no timeout protection for response body reading.
+- Added three-layer protection against stuck polling:
+  1. **Response body timeout** — Keep socket timeout active during response body reading; use `settled` flag and `res.resume()` to prevent Promise leaks
+  2. **Overall poll timeout** — `fetchUsage()` wrapped in 90-second hard timeout via `Promise.race`
+  3. **Stale poll detection** — Auto-reset `_polling` if previous poll has been running for over 120 seconds
+
+**Enhancements**
+
+- Reset countdown now shows hours alongside days (e.g., "8d 12h" instead of "8 days")
+
+**修复**
+
+- 修复长时间运行后轮询永久卡死的问题：当 HTTP 响应体读取挂起（网络中断、机器休眠等）时，`_polling` 标志永远为 `true`，导致后续所有轮询被跳过。根因是收到响应头后移除了超时监听器，响应体读取阶段无超时保护。
+- 三层防护机制：
+  1. **响应体超时** — 保持超时监听器在响应体读取期间有效，添加 `settled` 标志和 `res.resume()` 防止 Promise 泄露
+  2. **总超时保护** — `fetchUsage()` 用 `Promise.race` 包裹 90 秒硬超时
+  3. **卡死检测** — 上次轮询超过 120 秒自动重置 `_polling`
+
+**优化**
+
+- 重置倒计时增加小时显示（如"8天12小时"替代"8天"）
 
 ### v1.1.8
 
