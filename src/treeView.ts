@@ -1,4 +1,4 @@
-import * as vscode from "vscode";
+﻿import * as vscode from "vscode";
 import { UsageTracker } from "./usageTracker";
 
 const MAX_MODE_SCHEME = "cursor-usage-max";
@@ -184,7 +184,7 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
                 reqItem.iconPath = new vscode.ThemeIcon("arrow-swap");
                 detailChildren.push(reqItem);
 
-                const costStr = e.usageBasedCosts || `$${(e.chargedCents / 100).toFixed(2)}`;
+                const costStr = sanitizeDisplayString(e.usageBasedCosts || `$${(e.chargedCents / 100).toFixed(2)}`);
                 const costItem = new UsageTreeItem(
                     vscode.l10n.t("Cost: {0}", costStr),
                     vscode.TreeItemCollapsibleState.None,
@@ -283,6 +283,12 @@ function formatTokens(tokens: number): string {
     return `${tokens}`;
 }
 
+function sanitizeDisplayString(s: string, maxLen = 128): string {
+    return s
+        .replace(/[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069\ufeff]/g, "")
+        .slice(0, maxLen);
+}
+
 function shortenModel(model: string): string {
     const map: Record<string, string> = {
         "claude-4.6-opus-high-thinking": "Claude 4.6 Opus",
@@ -295,7 +301,7 @@ function shortenModel(model: string): string {
         "composer-1.5": "Composer 1.5",
         "cursor-small": "Cursor Small",
     };
-    return map[model] || model;
+    return map[model] || sanitizeDisplayString(model);
 }
 
 function getUsageIcon(used: number, max: number): vscode.ThemeIcon {

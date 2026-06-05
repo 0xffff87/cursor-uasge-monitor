@@ -1,4 +1,4 @@
-import * as vscode from "vscode";
+﻿import * as vscode from "vscode";
 import { fetchUsage, UsageSnapshot, FetchResult, getMaxModeInfo, MaxModeInfo } from "./api";
 
 export interface AlertChange {
@@ -20,6 +20,7 @@ export class UsageTracker {
     private _polling = false;
     private _pollStartTime = 0;
     private _pollCount = 0;
+    private _activePollId = 0;
     private _maxModeInfo: MaxModeInfo | null = null;
 
     set onUpdate(callback: (() => void) | null) {
@@ -60,7 +61,8 @@ export class UsageTracker {
 
     async poll(force = false): Promise<boolean> {
         this._pollCount++;
-        const pollId = this._pollCount;
+        this._activePollId = this._pollCount;
+        const pollId = this._activePollId;
         const ts = new Date().toISOString();
 
         if (this._polling) {
@@ -177,7 +179,11 @@ export class UsageTracker {
 
             log.appendLine(`  变化检测: changed=${changed}, force=${force}`);
 
-            // 更新本地数据（只在完全成功时更新）
+            if (pollId !== this._activePollId) {
+                log.appendLine(`[${ts}] poll#${pollId} 已过期（当前活跃=${this._activePollId}），丢弃结果`);
+                return false;
+            }
+
             this._lastSnapshot = snapshot;
 
             // 只在完全成功且非恢复期时检查 alert

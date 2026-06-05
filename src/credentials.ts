@@ -1,9 +1,10 @@
-import * as fs from "fs";
+﻿import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { execFile } from "child_process";
 
-const MAX_READFILE_SIZE = 2 * 1024 * 1024 * 1024;
+const MAX_SQLJS_DB_SIZE = 64 * 1024 * 1024;
+const MAX_JSON_FILE_SIZE = 10 * 1024 * 1024;
 const log = vscode.window.createOutputChannel("Cursor Usage Monitor - Credentials");
 
 let cachedAccessToken: string | null = null;
@@ -11,6 +12,7 @@ let cachedUserId: string | null = null;
 
 export function clearCachedToken(): void {
     cachedAccessToken = null;
+    cachedUserId = null;
 }
 
 export async function getUserId(): Promise<string | null> {
@@ -33,7 +35,8 @@ export async function getUserId(): Promise<string | null> {
     // 回退：从数据库中读取 userId
     const dbPath = getDbPath();
     if (fs.existsSync(dbPath)) {
-        const userId = await queryDb(dbPath, "cursorAuth/cachedSignUpId");
+        const rawUserId = await queryDb(dbPath, "cursorAuth/cachedSignUpId");
+        const userId = rawUserId ? extractUserId(rawUserId) : null;
         if (userId) {
             log.appendLine(`从数据库获取到 userId: ${userId.substring(0, 10)}...`);
             cachedUserId = userId;
@@ -55,10 +58,8 @@ export async function getAccessToken(forceRefresh = false): Promise<string | nul
         return null;
     }
 
-    // 尝试多个可能的 key
     const keys = [
         "cursorAuth/accessToken",
-        "cursorAuth/refreshToken",
     ];
 
     for (const key of keys) {
@@ -81,7 +82,7 @@ export async function getAccessToken(forceRefresh = false): Promise<string | nul
 async function queryDb(dbPath: string, key: string): Promise<string | null> {
     try {
         const dbSize = fs.statSync(dbPath).size;
-        if (dbSize >= MAX_READFILE_SIZE) {
+        if (dbSize >= MAX_SQLJS_DB_SIZE) {
             return await queryDbViaPython(dbPath, key);
         }
         return await queryDbViaSqlJs(dbPath, key);
@@ -136,6 +137,11 @@ function getDbPath(): string {
 
 async function findUserIdInFile(filePath: string): Promise<string | null> {
     if (!fs.existsSync(filePath)) return null;
+    const stat = fs.statSync(filePath);
+    if (stat.size > MAX_JSON_FILE_SIZE) {
+        log.appendLine(`文件过大，跳过: ${filePath} (${stat.size} bytes)`);
+        return null;
+    }
     const content = fs.readFileSync(filePath, "utf8");
 
     try {
@@ -153,7 +159,7 @@ async function findUserIdInFile(filePath: string): Promise<string | null> {
         return findUserIdRecursive(data);
     } catch {
         const match = content.match(/user_[a-zA-Z0-9]{20,}/);
-        return match ? match[0] : null;
+        return match ? extractUserId(match[0]) : null;
     }
 }
 
@@ -166,13 +172,13 @@ function extractUserId(oauthId: string): string | null {
     return oauthId.startsWith("user_") ? oauthId : null;
 }
 
-function findUserIdRecursive(obj: any): string | null {
-    if (!obj || typeof obj !== "object") return null;
-    for (const key in obj) {
+function findUserIdRecursive(obj: any, depth = 0): string | null {
+    if (!obj || typeof obj !== "object" || depth > 20) return null;
+    for (const key of Object.keys(obj)) {
         const val = obj[key];
         if (typeof val === "string" && val.startsWith("user_") && val.length > 20) return val;
         if (typeof val === "object") {
-            const found = findUserIdRecursive(val);
+            const found = findUserIdRecursive(val, depth + 1);
             if (found) return found;
         }
     }
@@ -186,11 +192,14 @@ async function queryDbViaSqlJs(dbPath: string, key: string): Promise<string | nu
         const fileBuffer = fs.readFileSync(dbPath);
         const db = new SQL.Database(fileBuffer);
         try {
-            const result = db.exec(`SELECT value FROM ItemTable WHERE key = '${key}'`);
-            if (result.length > 0 && result[0].values.length > 0) {
-                return result[0].values[0][0] as string;
+            const stmt = db.prepare("SELECT value FROM ItemTable WHERE key = $key");
+            stmt.bind({ $key: key });
+            let value: string | null = null;
+            if (stmt.step()) {
+                value = stmt.get()[0] as string;
             }
-            return null;
+            stmt.free();
+            return value;
         } finally {
             db.close();
         }
@@ -203,13 +212,13 @@ async function queryDbViaSqlJs(dbPath: string, key: string): Promise<string | nu
 async function queryDbViaPython(dbPath: string, key: string): Promise<string | null> {
     const cmds = process.platform === "win32" ? ["python", "py", "python3"] : ["python3", "python"];
     const script =
-        `import sqlite3, sys; conn = sqlite3.connect(sys.argv[1]); cur = conn.cursor(); ` +
-        `cur.execute("SELECT value FROM ItemTable WHERE key = '${key}' LIMIT 1"); ` +
+        `import sqlite3, sys; conn = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True); cur = conn.cursor(); ` +
+        `cur.execute("SELECT value FROM ItemTable WHERE key = ? LIMIT 1", (sys.argv[2],)); ` +
         `row = cur.fetchone(); print(row[0] if row and row[0] else ''); conn.close()`;
 
     for (const cmd of cmds) {
         try {
-            const token = await execFileAsync(cmd, ["-c", script, dbPath]);
+            const token = await execFileAsync(cmd, ["-c", script, dbPath, key]);
             if (token) {
                 log.appendLine(`通过 ${cmd} 获取到值 (key=${key})`);
                 return token;

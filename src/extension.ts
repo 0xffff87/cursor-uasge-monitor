@@ -1,15 +1,15 @@
-import * as vscode from "vscode";
+﻿import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { execSync, spawn, ChildProcess } from "child_process";
+import { execFileSync, spawn, ChildProcess } from "child_process";
 import { UsageTracker, AlertChange } from "./usageTracker";
 import { getDbPath } from "./api";
 import { UsageTreeProvider, MaxModeDecorationProvider } from "./treeView";
 import { initSecretStorage, storeSecretToken, deleteSecretToken, getSecretToken } from "./api";
 
-const ALERT_LOCK_FILE = path.join(os.tmpdir(), "cursor-usage-monitor-alert.lock");
-const MAX_MODE_LOCK_FILE = path.join(os.tmpdir(), "cursor-usage-monitor-maxmode.lock");
+let ALERT_LOCK_FILE = "";
+let MAX_MODE_LOCK_FILE = "";
 const ALERT_DEDUPE_MS = 60000;
 const ALERT_JITTER_MS = 2000;
 
@@ -136,6 +136,11 @@ async function tryAcquireAlertLock(lockFile: string, dedupeMs = ALERT_DEDUPE_MS)
 }
 
 export async function activate(context: vscode.ExtensionContext) {
+    const safeDir = context.globalStorageUri.fsPath;
+    fs.mkdirSync(safeDir, { recursive: true });
+    ALERT_LOCK_FILE = path.join(safeDir, "alert.lock");
+    MAX_MODE_LOCK_FILE = path.join(safeDir, "maxmode.lock");
+
     // 初始化 SecretStorage，用于加密存储 sessionToken
     initSecretStorage(context.secrets);
 
@@ -226,7 +231,7 @@ prev = None
 
 while True:
     try:
-        c = sqlite3.connect(DB_PATH)
+        c = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
         row = c.execute("SELECT value FROM ItemTable WHERE key=?", (KEY,)).fetchone()
         c.close()
         if row:
@@ -248,11 +253,26 @@ while True:
         const cmds = os.platform() === "win32" ? ["python", "py", "python3"] : ["python3", "python"];
         for (const cmd of cmds) {
             try {
-                execSync(`${cmd} --version`, { stdio: "pipe", timeout: 5000 });
+                execFileSync(cmd, ["--version"], { stdio: "pipe", timeout: 5000, windowsHide: true });
                 return cmd;
             } catch { /* try next */ }
         }
         return null;
+    }
+
+    function parseMaxModeStatus(raw: unknown): Record<string, { maxMode: boolean; modelName: string }> | null {
+        if (!raw || typeof raw !== "object") return null;
+        const result: Record<string, { maxMode: boolean; modelName: string }> = {};
+        for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+            if (typeof k !== "string" || k.length > 64) continue;
+            if (!v || typeof v !== "object") continue;
+            const entry = v as Record<string, unknown>;
+            const maxMode = entry.maxMode === true;
+            let modelName = String(entry.modelName ?? "unknown").slice(0, 128);
+            if (/[\x00-\x1f\x7f]/.test(modelName)) modelName = "unknown";
+            result[k] = { maxMode, modelName };
+        }
+        return Object.keys(result).length > 0 ? result : null;
     }
 
     function handleMaxModeStatus(status: Record<string, { maxMode: boolean; modelName: string }>) {
@@ -326,6 +346,11 @@ while True:
         }
     }
 
+    let watcherDisposed = false;
+    let watcherRestartTimer: NodeJS.Timeout | undefined;
+    let watcherRestartAttempts = 0;
+    const MAX_WATCHER_RESTARTS = 10;
+
     function startMaxModeWatcher() {
         const pythonCmd = findPython();
         if (!pythonCmd) {
@@ -339,19 +364,32 @@ while True:
             return;
         }
 
-        const scriptFile = path.join(os.tmpdir(), "_cursor_usage_max_mode_watcher.py");
-        fs.writeFileSync(scriptFile, WATCHER_SCRIPT);
+        const scriptFile = path.join(safeDir, "_cursor_usage_max_mode_watcher.py");
+        fs.writeFileSync(scriptFile, WATCHER_SCRIPT, { mode: 0o600 });
+
+        const MAX_LINE_BUFFER = 64 * 1024;
 
         const startProcess = () => {
+            if (watcherDisposed || watcherRestartAttempts >= MAX_WATCHER_RESTARTS) {
+                if (watcherRestartAttempts >= MAX_WATCHER_RESTARTS) {
+                    extLog.appendLine(`[${new Date().toISOString()}] Max Mode 监控已达最大重启次数 ${MAX_WATCHER_RESTARTS}，停止重启`);
+                }
+                return;
+            }
             extLog.appendLine(`[${new Date().toISOString()}] 启动 Max Mode 监控进程: ${pythonCmd}`);
             const proc = spawn(pythonCmd, [scriptFile, dbPath, "1"], {
-                stdio: ["pipe", "pipe", "pipe"],
+                stdio: ["ignore", "pipe", "pipe"],
             });
             maxModeWatcherProcess = proc;
 
             let lineBuffer = "";
 
             proc.stdout!.on("data", (chunk: Buffer) => {
+                if (lineBuffer.length + chunk.length > MAX_LINE_BUFFER) {
+                    extLog.appendLine(`[${new Date().toISOString()}] Max Mode watcher: stdout 缓冲溢出，终止进程`);
+                    proc.kill();
+                    return;
+                }
                 lineBuffer += chunk.toString();
                 const lines = lineBuffer.split("\n");
                 lineBuffer = lines.pop() || "";
@@ -360,8 +398,11 @@ while True:
                     const trimmed = line.trim();
                     if (!trimmed) continue;
                     try {
-                        const status = JSON.parse(trimmed);
-                        handleMaxModeStatus(status);
+                        const status = parseMaxModeStatus(JSON.parse(trimmed));
+                        if (status) {
+                            watcherRestartAttempts = 0;
+                            handleMaxModeStatus(status);
+                        }
                     } catch (e: any) {
                         extLog.appendLine(`[${new Date().toISOString()}] Max Mode 解析错误: ${e.message}`);
                     }
@@ -369,15 +410,17 @@ while True:
             });
 
             proc.stderr!.on("data", (chunk: Buffer) => {
-                extLog.appendLine(`[${new Date().toISOString()}] Max Mode watcher stderr: ${chunk.toString().trim()}`);
+                extLog.appendLine(`[${new Date().toISOString()}] Max Mode watcher stderr: ${chunk.toString().trim().slice(0, 500)}`);
             });
 
             proc.on("exit", (code) => {
-                extLog.appendLine(`[${new Date().toISOString()}] Max Mode 监控进程退出 (code=${code})，3s 后重启`);
                 maxModeWatcherProcess = undefined;
-                setTimeout(() => {
-                    if (!proc.killed) startProcess();
-                }, 3000);
+                if (!watcherDisposed) {
+                    watcherRestartAttempts++;
+                    const delay = Math.min(3000 * Math.pow(2, watcherRestartAttempts - 1), 60000);
+                    extLog.appendLine(`[${new Date().toISOString()}] Max Mode 监控进程退出 (code=${code})，${delay / 1000}s 后第 ${watcherRestartAttempts} 次重启`);
+                    watcherRestartTimer = setTimeout(() => startProcess(), delay);
+                }
             });
 
             proc.on("error", (err) => {
@@ -389,6 +432,8 @@ while True:
 
         context.subscriptions.push({
             dispose: () => {
+                watcherDisposed = true;
+                if (watcherRestartTimer) clearTimeout(watcherRestartTimer);
                 if (maxModeWatcherProcess) {
                     maxModeWatcherProcess.kill();
                     maxModeWatcherProcess = undefined;
@@ -426,14 +471,18 @@ while True:
 
     context.subscriptions.push(
         vscode.commands.registerCommand("cursor-usage-monitor.setToken", async () => {
-            const current = await getSecretToken() || "";
-
             const token = await vscode.window.showInputBox({
                 prompt: vscode.l10n.t("Enter Cursor Session Token (format: userId%3A%3AaccessToken)"),
                 placeHolder: "userId%3A%3AaccessToken",
-                value: current,
                 password: true,
                 ignoreFocusOut: true,
+                validateInput: (v) => {
+                    if (!v) return null;
+                    if (v.length > 4096) return vscode.l10n.t("Token too long");
+                    if (/[\x00-\x1f\x7f]/.test(v)) return vscode.l10n.t("Token contains invalid control characters");
+                    if (!v.includes("%3A%3A")) return vscode.l10n.t("Invalid format (expected userId%3A%3AaccessToken)");
+                    return null;
+                },
             });
 
             if (token !== undefined) {
@@ -546,8 +595,9 @@ while True:
         vscode.commands.registerCommand("cursor-usage-monitor.hideSection", async (item?: any) => {
             const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
             const hidden = config.get<string[]>("hiddenItems", []);
+            const ALLOWED_SECTIONS = new Set(["summarySection", "recentSection"]);
             const sectionId = item?.contextValue;
-            if (sectionId && !hidden.includes(sectionId)) {
+            if (sectionId && ALLOWED_SECTIONS.has(sectionId) && !hidden.includes(sectionId)) {
                 hidden.push(sectionId);
                 await config.update("hiddenItems", hidden, vscode.ConfigurationTarget.Global);
                 const label = getSectionLabel(sectionId);
@@ -799,7 +849,7 @@ function startPolling() {
     }
 
     const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
-    const pollingInterval = config.get<number>("pollingInterval", 3) * 1000;
+    const pollingInterval = Math.max(1, Math.min(60, config.get<number>("pollingInterval", 3) || 3)) * 1000;
 
     extLog.appendLine(`[${new Date().toISOString()}] 启动轮询定时器，间隔=${pollingInterval}ms`);
 
@@ -813,16 +863,23 @@ function startPolling() {
 
 async function migrateTokenToSecretStorage(secrets: vscode.SecretStorage): Promise<void> {
     const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
-    const oldToken = config.get<string>("sessionToken", "");
-    if (oldToken) {
+    const TOKEN_RE = /^[A-Za-z0-9._~%:+-]+$/;
+
+    const scopes: { token: string | undefined; target: vscode.ConfigurationTarget }[] = [
+        { token: config.inspect<string>("sessionToken")?.globalValue, target: vscode.ConfigurationTarget.Global },
+        { token: config.inspect<string>("sessionToken")?.workspaceValue, target: vscode.ConfigurationTarget.Workspace },
+        { token: config.inspect<string>("sessionToken")?.workspaceFolderValue, target: vscode.ConfigurationTarget.WorkspaceFolder },
+    ];
+
+    for (const { token, target } of scopes) {
+        if (!token) continue;
         const existing = await secrets.get("cursorUsageMonitor.sessionToken");
-        if (!existing) {
-            await secrets.store("cursorUsageMonitor.sessionToken", oldToken);
-            extLog.appendLine("已将 sessionToken 从 settings.json 迁移到 SecretStorage");
+        if (!existing && TOKEN_RE.test(token) && token.includes("%3A%3A") && token.length <= 4096) {
+            await secrets.store("cursorUsageMonitor.sessionToken", token);
+            extLog.appendLine("已将 sessionToken 迁移到 SecretStorage");
         }
-        // 清除 settings.json 中的明文 token
-        await config.update("sessionToken", undefined, vscode.ConfigurationTarget.Global);
-        extLog.appendLine("已清除 settings.json 中的明文 sessionToken");
+        await config.update("sessionToken", undefined, target);
+        extLog.appendLine(`已清除作用域 ${target} 中的明文 sessionToken`);
     }
 }
 

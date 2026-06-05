@@ -56,20 +56,35 @@ function log(msg: string) {
     outputChannel.appendLine(`[${new Date().toLocaleTimeString()}] ${msg}`);
 }
 
+const COOKIE_SAFE_RE = /^[A-Za-z0-9._~%:+-]+$/;
+
 async function getSessionToken(): Promise<{ userId: string; cookieValue: string } | null> {
     // 优先从本地 Cursor 数据库自动获取
     const userId = await getUserId();
     const accessToken = userId ? await getAccessToken() : null;
 
     if (userId && accessToken) {
-        return { userId, cookieValue: `${userId}%3A%3A${accessToken}` };
+        const cookieValue = `${userId}%3A%3A${accessToken}`;
+        if (!COOKIE_SAFE_RE.test(cookieValue)) {
+            log("凭证含非法字符，拒绝使用");
+            return null;
+        }
+        return { userId, cookieValue };
     }
 
     // 自动获取失败时，回退到用户手动设置的 token（SecretStorage 加密存储）
     const manualToken = await getSecretToken();
     if (manualToken) {
+        if (!COOKIE_SAFE_RE.test(manualToken)) {
+            log("手动 token 含非法字符，拒绝使用");
+            return null;
+        }
         log("自动获取失败，使用手动设置的 token");
         const manualUserId = manualToken.split("%3A%3A")[0];
+        if (!/^user_[a-zA-Z0-9]{20,}$/.test(manualUserId)) {
+            log("手动 token 中 userId 格式无效");
+            return null;
+        }
         return { userId: manualUserId, cookieValue: manualToken };
     }
 
@@ -88,7 +103,7 @@ export async function fetchUsage(): Promise<FetchResult> {
     const session = await getSessionToken();
     if (!session) return { snapshot: null, error: "无法获取 Session Token", eventsError: false, teamDataError: false };
 
-    const usageData = await httpGet(`https://cursor.com/api/usage?user=${session.userId}`, session.cookieValue);
+    const usageData = await httpGet(`https://cursor.com/api/usage?user=${encodeURIComponent(session.userId)}`, session.cookieValue);
     if (!usageData) { log("获取 /api/usage 失败"); return { snapshot: null, error: "获取 /api/usage 失败", eventsError: false, teamDataError: false }; }
 
     const gpt4 = usageData["gpt-4"];
@@ -119,7 +134,8 @@ export async function fetchUsage(): Promise<FetchResult> {
     }
 
     const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
-    const displayCount = config.get<number>("displayCount", 5);
+    const rawDisplayCount = config.get<number>("displayCount", 5);
+    const displayCount = Number.isFinite(rawDisplayCount) ? Math.max(1, Math.min(50, rawDisplayCount)) : 5;
     const eventsResult = await fetchUsageEvents(session.cookieValue, displayCount);
 
     return {
@@ -212,8 +228,16 @@ function httpPost(url: string, body: any, cookieValue: string, retryOnAuth = tru
     return makeRequest("POST", url, body, cookieValue, retryOnAuth);
 }
 
+const ALLOWED_HOSTS = new Set(["cursor.com", "www.cursor.com"]);
+
 function makeRequest(method: string, url: string, body: any | null, cookieValue: string, retryOnAuth: boolean, serverRetryCount = 0): Promise<any | null> {
     return new Promise((resolve) => {
+        const urlObj = new URL(url);
+        if (!ALLOWED_HOSTS.has(urlObj.hostname)) {
+            log(`${method} ${url} → 主机 ${urlObj.hostname} 不在白名单，拒绝请求`);
+            resolve(null);
+            return;
+        }
 
         let settled = false;
         const safeResolve = (value: any | null) => {
@@ -222,7 +246,6 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
             resolve(value);
         };
 
-        const urlObj = new URL(url);
         const postData = body ? JSON.stringify(body) : null;
 
         const options: https.RequestOptions = {
@@ -254,11 +277,15 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
             }
 
             if (res.statusCode && res.statusCode >= 400) {
+                const MAX_ERR_BODY = 64 * 1024;
                 let errData = "";
-                res.on("data", (chunk) => { errData += chunk; });
+                res.on("data", (chunk) => {
+                    if (errData.length < MAX_ERR_BODY) {
+                        errData += chunk.toString().slice(0, MAX_ERR_BODY - errData.length);
+                    }
+                });
                 res.on("end", () => {
                     log(`${method} ${url} → HTTP ${res.statusCode}: ${errData.substring(0, 500)}`);
-                    // 5xx 服务器错误自动重试（最多 2 次，间隔 3 秒）
                     if (res.statusCode! >= 500 && serverRetryCount < 2) {
                         const delay = (serverRetryCount + 1) * 3000;
                         log(`${method} ${url} → 服务器错误，${delay / 1000}s 后第 ${serverRetryCount + 1} 次重试`);
@@ -272,19 +299,27 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
                 return;
             }
 
-            if (res.statusCode && [301, 302, 307, 308].includes(res.statusCode)) {
+            if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400) {
                 res.resume();
                 log(`${method} ${url} → ${res.statusCode} 重定向到 ${res.headers.location || "(无 location)"}，已拒绝跟随`);
                 safeResolve(null);
                 return;
             }
 
+            const MAX_BODY = 5 * 1024 * 1024;
             let data = "";
-            res.on("data", (chunk) => { data += chunk; });
+            res.on("data", (chunk) => {
+                data += chunk;
+                if (data.length > MAX_BODY) {
+                    log(`${method} ${url} → 响应体超过 ${MAX_BODY} 字节，中断读取`);
+                    req.destroy();
+                    safeResolve(null);
+                }
+            });
             res.on("end", () => {
                 try { safeResolve(JSON.parse(data)); }
                 catch {
-                    log(`${method} ${url} → HTTP ${res.statusCode} JSON 解析失败: ${data.substring(0, 200)}`);
+                    log(`${method} ${url} → HTTP ${res.statusCode} JSON 解析失败`);
                     safeResolve(null);
                 }
             });
