@@ -204,6 +204,48 @@ npx @vscode/vsce package --no-dependencies
 
 ## Changelog / 更新日志
 
+### v1.2.3
+
+**Enhancements**
+
+- Show a notification popup when Max Mode is enabled, so users are aware of the mode switch
+- When multiple Cursor windows are open, each monitored alert value is only notified once across all instances, preventing duplicate alert popups
+
+**优化**
+
+- Max Mode 开启时弹窗提示，让用户明确感知模式切换
+- 多开 Cursor 窗口时，同一个监控值只会提示一次，避免重复弹窗
+
+### v1.2.2
+
+**Enhancements**
+
+- Smarter reset countdown granularity:
+  - \>= 1 day: shows days + hours (e.g., "8d 12h")
+  - < 1 day: shows hours + minutes (e.g., "3h 25m")
+  - < 1 hour: shows minutes + seconds (e.g., "45m 30s")
+
+**优化**
+
+- 重置倒计时智能分级显示：
+  - \>= 1 天：显示天+小时（如"8天12小时"）
+  - < 1 天：显示小时+分钟（如"3小时25分钟"）
+  - < 1 小时：显示分+秒（如"45分30秒"）
+
+### v1.2.1
+
+**Bug Fixes**
+
+- Fixed false "Included Requests increased by 875" alerts when team API temporarily fails: `numRequests` (all types, 1375) was used as fallback instead of `fastPremiumRequests` (premium only, 500), creating a phantom jump of 875
+- When team data fetch fails, now preserves the previous successful `includedUsed` and `onDemandSpent` values instead of falling back to unreliable `numRequests`
+- Alerts for `includedRequests` and `onDemandSpending` are now skipped when team data source is unreliable (either current or previous poll)
+
+**修复**
+
+- 修复团队 API 偶然失败时触发"Included Requests 增长了 875"的假警报：`numRequests`（含全部类型=1375）被用作回退，与 `fastPremiumRequests`（仅 premium=500）混用导致数值跳变
+- 团队数据获取失败时，保留上次成功的 `includedUsed` 和 `onDemandSpent` 值，不再回退到不可靠的 `numRequests`
+- 当前或上次的团队数据不可靠时，跳过 `includedRequests` 和 `onDemandSpending` 提醒
+
 ### v1.2.0
 
 **Bug Fixes**

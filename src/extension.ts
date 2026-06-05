@@ -1,7 +1,17 @@
 import * as vscode from "vscode";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
+import { execSync, spawn, ChildProcess } from "child_process";
 import { UsageTracker, AlertChange } from "./usageTracker";
-import { UsageTreeProvider } from "./treeView";
+import { getDbPath } from "./api";
+import { UsageTreeProvider, MaxModeDecorationProvider } from "./treeView";
 import { initSecretStorage, storeSecretToken, deleteSecretToken, getSecretToken } from "./api";
+
+const ALERT_LOCK_FILE = path.join(os.tmpdir(), "cursor-usage-monitor-alert.lock");
+const MAX_MODE_LOCK_FILE = path.join(os.tmpdir(), "cursor-usage-monitor-maxmode.lock");
+const ALERT_DEDUPE_MS = 60000;
+const ALERT_JITTER_MS = 2000;
 
 let pollTimer: NodeJS.Timeout | undefined;
 let tracker: UsageTracker;
@@ -23,6 +33,7 @@ function getItemLabel(id: string): string {
     const map: Record<string, string> = {
         includedRequests: "Included Requests",
         onDemandUsage: "On-Demand Usage",
+        maxMode: "Max Mode",
     };
     return map[id] || id;
 }
@@ -82,9 +93,45 @@ function updateStatusBar() {
             const limit = snapshot.onDemandLimitDollars > 0 ? `/$${snapshot.onDemandLimitDollars}` : "";
             sbItem.text = `$(zap) OD: ${spent}${limit}`;
             sbItem.tooltip = `On-Demand Usage: ${spent}${limit}`;
+        } else if (id === "maxMode") {
+            const maxInfo = tracker.maxModeInfo;
+            if (maxInfo) {
+                sbItem.text = maxInfo.maxMode ? `$(flame) Max: ON` : `$(circle-outline) Max: OFF`;
+                sbItem.tooltip = maxInfo.maxMode
+                    ? `Max Mode: ON (${maxInfo.modelName})`
+                    : `Max Mode: OFF`;
+            } else {
+                sbItem.text = `$(question) Max: ?`;
+                sbItem.tooltip = "Max Mode: Unknown";
+            }
         }
 
         sbItem.show();
+    }
+}
+
+/**
+ * 多实例弹窗去重：随机抖动 + 文件锁。
+ * 抖动使各实例错开检查时间，避免同时读到旧锁文件后全部弹窗。
+ */
+async function tryAcquireAlertLock(lockFile: string, dedupeMs = ALERT_DEDUPE_MS): Promise<boolean> {
+    const jitter = Math.floor(Math.random() * ALERT_JITTER_MS);
+    await new Promise(resolve => setTimeout(resolve, jitter));
+
+    try {
+        const now = Date.now();
+        if (fs.existsSync(lockFile)) {
+            const content = fs.readFileSync(lockFile, "utf-8").trim();
+            const lastTime = parseInt(content, 10);
+            if (!isNaN(lastTime) && now - lastTime < dedupeMs) {
+                extLog.appendLine(`[${new Date().toISOString()}] 跳过弹窗：其他实例已在 ${now - lastTime}ms 前弹出 (lock=${path.basename(lockFile)})`);
+                return false;
+            }
+        }
+        fs.writeFileSync(lockFile, String(now), "utf-8");
+        return true;
+    } catch {
+        return true;
     }
 }
 
@@ -98,6 +145,9 @@ export async function activate(context: vscode.ExtensionContext) {
     tracker = new UsageTracker();
     treeProvider = new UsageTreeProvider(tracker);
 
+    const maxModeDecoProvider = new MaxModeDecorationProvider();
+    context.subscriptions.push(vscode.window.registerFileDecorationProvider(maxModeDecoProvider));
+
     const treeView = vscode.window.createTreeView("cursorUsageView", {
         treeDataProvider: treeProvider,
         showCollapseAll: false,
@@ -106,8 +156,18 @@ export async function activate(context: vscode.ExtensionContext) {
 
     tracker.onUpdate = () => {
         treeProvider.refresh();
+        maxModeDecoProvider.fireChange();
         updateStatusBar();
-        // 数据加载后自动展开 TreeView，确保用户能看到内容
+
+        const maxInfo = tracker.maxModeInfo;
+        if (maxInfo?.maxMode) {
+            treeView.description = "⚠ MAX MODE";
+            treeView.badge = { value: 1, tooltip: vscode.l10n.t("Max Mode is ON") };
+        } else {
+            treeView.description = undefined;
+            treeView.badge = undefined;
+        }
+
         const children = treeProvider.getChildren();
         if (children.length > 0) {
             treeView.reveal(children[0], { expand: true, focus: false, select: false })
@@ -116,28 +176,234 @@ export async function activate(context: vscode.ExtensionContext) {
     };
 
     let alertDialogShowing = false;
+    let alertLockPending = false;
 
     tracker.onAlert = (alerts: AlertChange[]) => {
-        // 防止弹窗堆积：当前有弹窗显示时跳过新的提醒
-        if (alertDialogShowing) return;
+        if (alertDialogShowing || alertLockPending) return;
 
-        alertDialogShowing = true;
-        const messages = alerts.map(formatAlertMessage);
-        const title = vscode.l10n.t("Cursor Usage Alert");
-        const detail = messages.join("\n");
-        vscode.window.showWarningMessage(
-            `⚠️ ${title}`,
-            { modal: true, detail },
-            vscode.l10n.t("View Settings"),
-        ).then((choice) => {
-            alertDialogShowing = false;
-            if (choice === vscode.l10n.t("View Settings")) {
-                vscode.commands.executeCommand("cursor-usage-monitor.configureAlerts");
-            }
-        }, () => {
-            alertDialogShowing = false;
+        alertLockPending = true;
+        tryAcquireAlertLock(ALERT_LOCK_FILE).then(acquired => {
+            alertLockPending = false;
+            if (!acquired || alertDialogShowing) return;
+
+            alertDialogShowing = true;
+            const messages = alerts.map(formatAlertMessage);
+            const title = vscode.l10n.t("Cursor Usage Alert");
+            const detail = messages.join("\n");
+            vscode.window.showWarningMessage(
+                `⚠️ ${title}`,
+                { modal: true, detail },
+                vscode.l10n.t("View Settings"),
+            ).then((choice) => {
+                alertDialogShowing = false;
+                if (choice === vscode.l10n.t("View Settings")) {
+                    vscode.commands.executeCommand("cursor-usage-monitor.configureAlerts");
+                }
+            }, () => {
+                alertDialogShowing = false;
+            });
         });
     };
+
+    // Max Mode 实时监控：启动持久 Python 子进程监听数据库变化
+    let lastAlertedMaxScopes = new Set<string>();
+    let maxModeWatcherProcess: ChildProcess | undefined;
+
+    const SCOPE_LABELS: Record<string, string> = {
+        composer: "Agent",
+        "cmd-k": "Cmd+K",
+        "background-composer": "Background Agent",
+    };
+
+    const WATCHER_SCRIPT = `
+import sqlite3, sys, json, time
+
+DB_PATH = sys.argv[1]
+INTERVAL = float(sys.argv[2])
+KEY = 'src.vs.platform.reactivestorage.browser.reactiveStorageServiceImpl.persistentStorage.applicationUser'
+
+prev = None
+
+while True:
+    try:
+        c = sqlite3.connect(DB_PATH)
+        row = c.execute("SELECT value FROM ItemTable WHERE key=?", (KEY,)).fetchone()
+        c.close()
+        if row:
+            d = json.loads(row[0])
+            mc = d.get('aiSettings', {}).get('modelConfig', {})
+            curr = {}
+            for k, v in mc.items():
+                if isinstance(v, dict) and 'maxMode' in v:
+                    curr[k] = {"maxMode": v["maxMode"], "modelName": v.get("modelName", "unknown")}
+            if curr != prev:
+                print(json.dumps(curr), flush=True)
+                prev = curr
+    except Exception:
+        pass
+    time.sleep(INTERVAL)
+`;
+
+    function findPython(): string | null {
+        const cmds = os.platform() === "win32" ? ["python", "py", "python3"] : ["python3", "python"];
+        for (const cmd of cmds) {
+            try {
+                execSync(`${cmd} --version`, { stdio: "pipe", timeout: 5000 });
+                return cmd;
+            } catch { /* try next */ }
+        }
+        return null;
+    }
+
+    function handleMaxModeStatus(status: Record<string, { maxMode: boolean; modelName: string }>) {
+        const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
+
+        const monitoredScopes = ["composer", "cmd-k"];
+        const enabledScopes: { scope: string; label: string; model: string }[] = [];
+
+        for (const scope of monitoredScopes) {
+            const info = status[scope];
+            if (info?.maxMode) {
+                enabledScopes.push({
+                    scope,
+                    label: SCOPE_LABELS[scope] || scope,
+                    model: info.modelName,
+                });
+            }
+        }
+
+        // maxModeAlert 仅控制弹窗，不影响 UI 同步
+        if (config.get<boolean>("maxModeAlert", true)) {
+            const newlyEnabled = enabledScopes.filter(s => !lastAlertedMaxScopes.has(s.scope));
+            if (newlyEnabled.length > 0) {
+                const lines = newlyEnabled.map(s => `• ${s.label}: ${s.model}`).join("\n");
+                extLog.appendLine(`[${new Date().toISOString()}] Max Mode 已开启: ${newlyEnabled.map(s => s.scope).join(", ")}`);
+
+                tryAcquireAlertLock(MAX_MODE_LOCK_FILE).then(acquired => {
+                    if (!acquired) return;
+
+                    const title = vscode.l10n.t("Max Mode Enabled Warning");
+                    const detail = vscode.l10n.t(
+                        "Max Mode has been turned ON (model: {0}). This will consume more premium requests. Please confirm before starting a conversation.",
+                        lines,
+                    );
+
+                    vscode.window.showWarningMessage(
+                        `🔥 ${title}`,
+                        { modal: true, detail },
+                        vscode.l10n.t("Don't remind again"),
+                    ).then((choice) => {
+                        if (choice === vscode.l10n.t("Don't remind again")) {
+                            config.update("maxModeAlert", false, vscode.ConfigurationTarget.Global);
+                            vscode.window.showInformationMessage(vscode.l10n.t("Max Mode alert disabled"));
+                        }
+                    });
+                });
+            }
+        }
+
+        lastAlertedMaxScopes = new Set(enabledScopes.map(s => s.scope));
+
+        // 同步 tracker 的 maxModeInfo，使状态栏/badge 立即反映 Python 监控的最新状态
+        const composerInfo = status["composer"];
+        tracker.maxModeInfo = composerInfo
+            ? { maxMode: composerInfo.maxMode, modelName: composerInfo.modelName, currentMode: tracker.maxModeInfo?.currentMode || "agent" }
+            : null;
+
+        // 更新 UI 显示
+        treeProvider.refresh();
+        maxModeDecoProvider.fireChange();
+        updateStatusBar();
+
+        // 同步 treeView 的 badge/description
+        const maxInfo = tracker.maxModeInfo;
+        if (maxInfo?.maxMode) {
+            treeView.description = "⚠ MAX MODE";
+            treeView.badge = { value: 1, tooltip: vscode.l10n.t("Max Mode is ON") };
+        } else {
+            treeView.description = undefined;
+            treeView.badge = undefined;
+        }
+    }
+
+    function startMaxModeWatcher() {
+        const pythonCmd = findPython();
+        if (!pythonCmd) {
+            extLog.appendLine(`[${new Date().toISOString()}] Max Mode 监控: 未找到 Python`);
+            return;
+        }
+
+        const dbPath = getDbPath();
+        if (!fs.existsSync(dbPath)) {
+            extLog.appendLine(`[${new Date().toISOString()}] Max Mode 监控: 数据库不存在 ${dbPath}`);
+            return;
+        }
+
+        const scriptFile = path.join(os.tmpdir(), "_cursor_usage_max_mode_watcher.py");
+        fs.writeFileSync(scriptFile, WATCHER_SCRIPT);
+
+        const startProcess = () => {
+            extLog.appendLine(`[${new Date().toISOString()}] 启动 Max Mode 监控进程: ${pythonCmd}`);
+            const proc = spawn(pythonCmd, [scriptFile, dbPath, "1"], {
+                stdio: ["pipe", "pipe", "pipe"],
+            });
+            maxModeWatcherProcess = proc;
+
+            let lineBuffer = "";
+
+            proc.stdout!.on("data", (chunk: Buffer) => {
+                lineBuffer += chunk.toString();
+                const lines = lineBuffer.split("\n");
+                lineBuffer = lines.pop() || "";
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed) continue;
+                    try {
+                        const status = JSON.parse(trimmed);
+                        handleMaxModeStatus(status);
+                    } catch (e: any) {
+                        extLog.appendLine(`[${new Date().toISOString()}] Max Mode 解析错误: ${e.message}`);
+                    }
+                }
+            });
+
+            proc.stderr!.on("data", (chunk: Buffer) => {
+                extLog.appendLine(`[${new Date().toISOString()}] Max Mode watcher stderr: ${chunk.toString().trim()}`);
+            });
+
+            proc.on("exit", (code) => {
+                extLog.appendLine(`[${new Date().toISOString()}] Max Mode 监控进程退出 (code=${code})，3s 后重启`);
+                maxModeWatcherProcess = undefined;
+                setTimeout(() => {
+                    if (!proc.killed) startProcess();
+                }, 3000);
+            });
+
+            proc.on("error", (err) => {
+                extLog.appendLine(`[${new Date().toISOString()}] Max Mode 监控进程错误: ${err.message}`);
+            });
+        };
+
+        startProcess();
+
+        context.subscriptions.push({
+            dispose: () => {
+                if (maxModeWatcherProcess) {
+                    maxModeWatcherProcess.kill();
+                    maxModeWatcherProcess = undefined;
+                }
+                try { fs.unlinkSync(scriptFile); } catch { /* ignore */ }
+            },
+        });
+    }
+
+    startMaxModeWatcher();
+
+    function restoreMaxModeDescription() {
+        const maxInfo = tracker.maxModeInfo;
+        treeView.description = maxInfo?.maxMode ? "⚠ MAX MODE" : undefined;
+    }
 
     context.subscriptions.push(
         vscode.commands.registerCommand("cursor-usage-monitor.refresh", () => {
@@ -147,10 +413,10 @@ export async function activate(context: vscode.ExtensionContext) {
                     try {
                         await tracker.poll(true);
                         treeView.description = vscode.l10n.t("✓ Updated");
-                        setTimeout(() => { treeView.description = undefined; }, 2000);
+                        setTimeout(restoreMaxModeDescription, 2000);
                     } catch (err) {
                         treeView.description = vscode.l10n.t("✗ Failed");
-                        setTimeout(() => { treeView.description = undefined; }, 3000);
+                        setTimeout(restoreMaxModeDescription, 3000);
                         console.error("[CursorUsageMonitor] Refresh error:", err);
                     }
                 },
@@ -327,7 +593,7 @@ export async function activate(context: vscode.ExtensionContext) {
             }
 
             if (!itemId) {
-                const choices = ["includedRequests", "onDemandUsage"]
+                const choices = ["includedRequests", "onDemandUsage", "maxMode"]
                     .filter((id) => !pinned.includes(id))
                     .map((id) => ({ label: getItemLabel(id), id }));
                 if (choices.length === 0) {
@@ -391,11 +657,22 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand("cursor-usage-monitor.configureAlerts", async () => {
             const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
-            const enabled = config.get<boolean>("alertEnabled", false);
-            const currentItems = config.get<string[]>("alertItems", ["newSession"]);
+        const enabled = config.get<boolean>("alertEnabled", true);
+        const currentItems = config.get<string[]>("alertItems", ["newSession", "includedRequests", "onDemandSpending"]);
+
+            const maxModeAlertOn = config.get<boolean>("maxModeAlert", true);
 
             const toggleChoice = await vscode.window.showQuickPick(
                 [
+                    {
+                        label: maxModeAlertOn
+                            ? `$(flame) ${vscode.l10n.t("Disable Max Mode alert")}`
+                            : `$(flame) ${vscode.l10n.t("Enable Max Mode alert")}`,
+                        description: maxModeAlertOn
+                            ? vscode.l10n.t("Currently: ON")
+                            : vscode.l10n.t("Currently: OFF"),
+                        id: "toggleMaxMode",
+                    },
                     {
                         label: enabled
                             ? `$(bell-slash) ${vscode.l10n.t("Disable alerts")}`
@@ -416,7 +693,15 @@ export async function activate(context: vscode.ExtensionContext) {
 
             if (!toggleChoice) return;
 
-            if (toggleChoice.id === "toggle") {
+            if (toggleChoice.id === "toggleMaxMode") {
+                const newVal = !maxModeAlertOn;
+                await config.update("maxModeAlert", newVal, vscode.ConfigurationTarget.Global);
+                vscode.window.showInformationMessage(
+                    newVal
+                        ? vscode.l10n.t("Max Mode alert enabled")
+                        : vscode.l10n.t("Max Mode alert disabled")
+                );
+            } else if (toggleChoice.id === "toggle") {
                 await config.update("alertEnabled", !enabled, vscode.ConfigurationTarget.Global);
                 vscode.window.showInformationMessage(
                     !enabled
@@ -498,6 +783,7 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.workspace.onDidChangeConfiguration((e) => {
             if (e.affectsConfiguration("cursorUsageMonitor")) {
                 treeProvider.refresh();
+                maxModeDecoProvider.fireChange();
                 updateStatusBar();
                 startPolling();
             }

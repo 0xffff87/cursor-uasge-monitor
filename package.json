@@ -2,13 +2,13 @@
   "name": "cursor-usage-monitor",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.2.0",
+  "version": "1.2.3",
   "publisher": "kso",
   "license": "MIT",
   "icon": "icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/0xffff87/cursor-uasge-monitor"
+    "url": "https://github.com/0xffff87/cursor-usage-monitor"
   },
   "engines": {
     "vscode": "^1.85.0"
@@ -51,7 +51,8 @@
       },
       {
         "command": "cursor-usage-monitor.setPollingInterval",
-        "title": "%cmd.setPollingInterval%"
+        "title": "%cmd.setPollingInterval%",
+        "icon": "$(watch)"
       },
       {
         "command": "cursor-usage-monitor.toggleTokenDetail",
@@ -96,6 +97,11 @@
         },
         {
           "command": "cursor-usage-monitor.setToken",
+          "when": "view == cursorUsageView",
+          "group": "navigation"
+        },
+        {
+          "command": "cursor-usage-monitor.setPollingInterval",
           "when": "view == cursorUsageView",
           "group": "navigation"
         },
@@ -202,18 +208,23 @@
           "default": [],
           "items": {
             "type": "string",
-            "enum": ["includedRequests", "onDemandUsage"]
+            "enum": ["includedRequests", "onDemandUsage", "maxMode"]
           },
           "description": "%config.statusBarItems%"
         },
+        "cursorUsageMonitor.maxModeAlert": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.maxModeAlert%"
+        },
         "cursorUsageMonitor.alertEnabled": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "%config.alertEnabled%"
         },
         "cursorUsageMonitor.alertItems": {
           "type": "array",
-          "default": ["newSession"],
+          "default": ["newSession", "includedRequests", "onDemandSpending"],
           "items": {
             "type": "string",
             "enum": ["newSession", "includedRequests", "onDemandSpending", "totalTokens"]
@@ -222,19 +233,19 @@
         },
         "cursorUsageMonitor.alertThreshold.newSession": {
           "type": "number",
-          "default": 1,
+          "default": 0,
           "minimum": 0,
           "description": "%config.alertThreshold.newSession%"
         },
         "cursorUsageMonitor.alertThreshold.includedRequests": {
           "type": "number",
-          "default": 10,
+          "default": 0,
           "minimum": 0,
           "description": "%config.alertThreshold.includedRequests%"
         },
         "cursorUsageMonitor.alertThreshold.onDemandSpending": {
           "type": "number",
-          "default": 1.0,
+          "default": 0,
           "minimum": 0,
           "description": "%config.alertThreshold.onDemandSpending%"
         },

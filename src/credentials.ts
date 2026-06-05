@@ -230,6 +230,43 @@ function execFileAsync(command: string, args: string[]): Promise<string | null> 
     });
 }
 
+export interface MaxModeInfo {
+    maxMode: boolean;
+    modelName: string;
+    currentMode: string;
+}
+
+const REACTIVE_STORAGE_KEY = "src.vs.platform.reactivestorage.browser.reactiveStorageServiceImpl.persistentStorage.applicationUser";
+
+export { getDbPath };
+
+export async function getMaxModeInfo(): Promise<MaxModeInfo | null> {
+    const dbPath = getDbPath();
+    if (!fs.existsSync(dbPath)) return null;
+
+    try {
+        const value = await queryDb(dbPath, REACTIVE_STORAGE_KEY);
+        if (!value) return null;
+
+        const data = JSON.parse(value);
+        const aiSettings = data.aiSettings;
+        const composerState = data.composerState;
+        if (!aiSettings?.modelConfig) return null;
+
+        const composerConfig = aiSettings.modelConfig.composer || {};
+        const currentMode = composerState?.defaultMode2 || "agent";
+
+        return {
+            maxMode: composerConfig.maxMode === true,
+            modelName: composerConfig.modelName || "default",
+            currentMode,
+        };
+    } catch (err) {
+        log.appendLine(`读取 Max Mode 信息失败: ${err}`);
+        return null;
+    }
+}
+
 function isFileTooLargeError(error: unknown): boolean {
     return !!error && typeof error === "object" && (error as NodeJS.ErrnoException).code === "ERR_FS_FILE_TOO_LARGE";
 }

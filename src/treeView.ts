@@ -1,6 +1,25 @@
 import * as vscode from "vscode";
-import { UsageEvent } from "./api";
 import { UsageTracker } from "./usageTracker";
+
+const MAX_MODE_SCHEME = "cursor-usage-max";
+
+export class MaxModeDecorationProvider implements vscode.FileDecorationProvider {
+    private _onDidChange = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
+    readonly onDidChangeFileDecorations = this._onDidChange.event;
+
+    fireChange(): void {
+        this._onDidChange.fire(undefined);
+    }
+
+    provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
+        if (uri.scheme !== MAX_MODE_SCHEME) return undefined;
+        return new vscode.FileDecoration(
+            undefined,
+            "Max Mode",
+            new vscode.ThemeColor("charts.red"),
+        );
+    }
+}
 
 export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem> {
     private _onDidChangeTreeData = new vscode.EventEmitter<UsageTreeItem | undefined | void>();
@@ -35,15 +54,19 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
                 const resetDate = new Date(snapshot.startOfMonth);
                 const nextReset = new Date(resetDate);
                 nextReset.setMonth(nextReset.getMonth() + 1);
-                const msLeft = nextReset.getTime() - Date.now();
-                const totalHours = Math.max(0, Math.ceil(msLeft / (1000 * 60 * 60)));
-                const days = Math.floor(totalHours / 24);
-                const hours = totalHours % 24;
+                const msLeft = Math.max(0, nextReset.getTime() - Date.now());
+                const totalSeconds = Math.ceil(msLeft / 1000);
+                const days = Math.floor(totalSeconds / 86400);
+                const hours = Math.floor((totalSeconds % 86400) / 3600);
+                const minutes = Math.floor((totalSeconds % 3600) / 60);
+                const seconds = totalSeconds % 60;
                 let countdownStr: string;
                 if (days > 0) {
                     countdownStr = vscode.l10n.t("{0}d {1}h", days, hours);
+                } else if (hours > 0) {
+                    countdownStr = vscode.l10n.t("{0}h {1}m", hours, minutes);
                 } else {
-                    countdownStr = vscode.l10n.t("{0}h", hours);
+                    countdownStr = vscode.l10n.t("{0}m {1}s", minutes, seconds);
                 }
                 summaryLabel = `📊 ${vscode.l10n.t("Monthly Summary (Reset in: {0})", countdownStr)}`;
             } else {
@@ -105,20 +128,28 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
                 recentItem.tooltip = vscode.l10n.t("Events API failed, showing cached data");
             }
 
+            const maxModeAlert = config.get<boolean>("maxModeAlert", true);
+
             recentItem.children = visibleEvents.map((e) => {
                 const timeStr = formatEventTime(e.timestamp);
                 const typeLabel = e.kind.includes("USAGE_BASED") ? "On-Demand" : "Included";
                 const modelStr = shortenModel(e.model);
+                const isMaxMode = maxModeAlert && e.maxMode;
 
                 const entry = new UsageTreeItem(
                     `${timeStr}  ${modelStr}`,
                     vscode.TreeItemCollapsibleState.Collapsed,
                 );
                 entry.id = `event_${e.timestamp}`;
-                entry.description = `${typeLabel}`;
-                entry.iconPath = e.kind.includes("USAGE_BASED")
-                    ? new vscode.ThemeIcon("zap", new vscode.ThemeColor("charts.orange"))
-                    : new vscode.ThemeIcon("check", new vscode.ThemeColor("charts.green"));
+                entry.description = isMaxMode ? `${typeLabel} · Max` : `${typeLabel}`;
+                if (isMaxMode) {
+                    entry.resourceUri = vscode.Uri.parse(`${MAX_MODE_SCHEME}:/${e.timestamp}`);
+                    entry.iconPath = new vscode.ThemeIcon("flame", new vscode.ThemeColor("charts.red"));
+                } else {
+                    entry.iconPath = e.kind.includes("USAGE_BASED")
+                        ? new vscode.ThemeIcon("zap", new vscode.ThemeColor("charts.orange"))
+                        : new vscode.ThemeIcon("check", new vscode.ThemeColor("charts.green"));
+                }
                 entry.tooltip = vscode.l10n.t("Click to expand details");
                 entry.contextValue = "recentEvent";
 

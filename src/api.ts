@@ -1,6 +1,8 @@
 import * as https from "https";
 import * as vscode from "vscode";
 import { getUserId, getAccessToken, clearCachedToken } from "./credentials";
+export type { MaxModeInfo } from "./credentials";
+export { getMaxModeInfo, getDbPath } from "./credentials";
 
 const outputChannel = vscode.window.createOutputChannel("Cursor Usage Monitor");
 
@@ -36,12 +38,14 @@ export interface UsageEvent {
     outputTokens: number;
     chargedCents: number;
     usageBasedCosts: string;
+    maxMode: boolean;
 }
 
 export interface UsageSnapshot {
     timestamp: Date;
     includedUsed: number;
     includedLimit: number;
+    includedSource: "fastPremium" | "numRequests";
     onDemandSpentDollars: number;
     onDemandLimitDollars: number;
     startOfMonth: string;
@@ -77,14 +81,15 @@ export interface FetchResult {
     snapshot: UsageSnapshot | null;
     error: string | null;
     eventsError: boolean;
+    teamDataError: boolean;
 }
 
 export async function fetchUsage(): Promise<FetchResult> {
     const session = await getSessionToken();
-    if (!session) return { snapshot: null, error: "无法获取 Session Token", eventsError: false };
+    if (!session) return { snapshot: null, error: "无法获取 Session Token", eventsError: false, teamDataError: false };
 
     const usageData = await httpGet(`https://cursor.com/api/usage?user=${session.userId}`, session.cookieValue);
-    if (!usageData) { log("获取 /api/usage 失败"); return { snapshot: null, error: "获取 /api/usage 失败", eventsError: false }; }
+    if (!usageData) { log("获取 /api/usage 失败"); return { snapshot: null, error: "获取 /api/usage 失败", eventsError: false, teamDataError: false }; }
 
     const gpt4 = usageData["gpt-4"];
     const maxRequests = gpt4?.maxRequestUsage ?? 500;
@@ -93,21 +98,23 @@ export async function fetchUsage(): Promise<FetchResult> {
     let onDemandSpentDollars = 0;
     let onDemandLimitDollars = 0;
     const numRequestsFromUsage = gpt4?.numRequests ?? 0;
-    // numRequests 包含所有类型请求，仅在无团队数据时使用
     let includedUsed = numRequestsFromUsage;
+    let includedSource: "fastPremium" | "numRequests" = "numRequests";
+    let teamDataError = false;
 
     const teamData = await fetchTeamSpendData(session.cookieValue);
     if (teamData) {
         onDemandSpentDollars = teamData.spentDollars;
         onDemandLimitDollars = teamData.limitDollars;
-        // 优先使用 fastPremiumRequests（仅计算 premium 请求，与官网一致）
         if (typeof teamData.fastPremiumRequests === "number") {
             log(`Included Requests 数据源: 使用 team/fastPremium=${teamData.fastPremiumRequests} (numRequests=${numRequestsFromUsage} 包含非 premium 请求)`);
             includedUsed = teamData.fastPremiumRequests;
+            includedSource = "fastPremium";
         } else {
             log(`Included Requests 数据源: fastPremiumRequests 不可用，回退到 numRequests=${numRequestsFromUsage}`);
         }
     } else {
+        teamDataError = true;
         log(`Included Requests 数据源: 团队数据获取失败，使用 numRequests=${numRequestsFromUsage}`);
     }
 
@@ -120,6 +127,7 @@ export async function fetchUsage(): Promise<FetchResult> {
             timestamp: new Date(),
             includedUsed,
             includedLimit: maxRequests,
+            includedSource,
             onDemandSpentDollars,
             onDemandLimitDollars,
             startOfMonth,
@@ -127,6 +135,7 @@ export async function fetchUsage(): Promise<FetchResult> {
         },
         error: null,
         eventsError: eventsResult.error,
+        teamDataError,
     };
 }
 
@@ -161,6 +170,7 @@ async function fetchUsageEvents(cookieValue: string, count: number): Promise<{ e
             outputTokens: tok.outputTokens || 0,
             chargedCents: e.chargedCents || 0,
             usageBasedCosts: e.usageBasedCosts || "",
+            maxMode: !!e.maxMode,
         };
     });
     return { events, error: false };
