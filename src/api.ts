@@ -1,4 +1,4 @@
-import * as https from "https";
+﻿import * as https from "https";
 import * as vscode from "vscode";
 import { getUserId, getAccessToken, clearCachedToken } from "./credentials";
 export type { MaxModeInfo } from "./credentials";
@@ -212,13 +212,8 @@ function httpPost(url: string, body: any, cookieValue: string, retryOnAuth = tru
     return makeRequest("POST", url, body, cookieValue, retryOnAuth);
 }
 
-function makeRequest(method: string, url: string, body: any | null, cookieValue: string, retryOnAuth: boolean, redirectCount = 0, serverRetryCount = 0): Promise<any | null> {
+function makeRequest(method: string, url: string, body: any | null, cookieValue: string, retryOnAuth: boolean, serverRetryCount = 0): Promise<any | null> {
     return new Promise((resolve) => {
-        if (redirectCount > 5) {
-            log(`${method} ${url} 重定向次数超过上限`);
-            resolve(null);
-            return;
-        }
 
         let settled = false;
         const safeResolve = (value: any | null) => {
@@ -268,7 +263,7 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
                         const delay = (serverRetryCount + 1) * 3000;
                         log(`${method} ${url} → 服务器错误，${delay / 1000}s 后第 ${serverRetryCount + 1} 次重试`);
                         setTimeout(() => {
-                            makeRequest(method, url, body, cookieValue, retryOnAuth, 0, serverRetryCount + 1).then(safeResolve);
+                            makeRequest(method, url, body, cookieValue, retryOnAuth, serverRetryCount + 1).then(safeResolve);
                         }, delay);
                     } else {
                         safeResolve(null);
@@ -279,12 +274,8 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
 
             if (res.statusCode && [301, 302, 307, 308].includes(res.statusCode)) {
                 res.resume();
-                const location = res.headers.location;
-                log(`${method} ${url} → ${res.statusCode} 重定向到 ${location || "(无 location)"}`);
-                if (location) {
-                    const redirectUrl = location.startsWith("http") ? location : `https://cursor.com${location}`;
-                    makeRequest(method, redirectUrl, body, cookieValue, retryOnAuth, redirectCount + 1, serverRetryCount).then(safeResolve);
-                } else { safeResolve(null); }
+                log(`${method} ${url} → ${res.statusCode} 重定向到 ${res.headers.location || "(无 location)"}，已拒绝跟随`);
+                safeResolve(null);
                 return;
             }
 
