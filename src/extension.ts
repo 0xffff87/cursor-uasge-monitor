@@ -136,12 +136,15 @@ async function tryAcquireAlertLock(lockFile: string, dedupeMs = ALERT_DEDUPE_MS)
 }
 
 export async function activate(context: vscode.ExtensionContext) {
+    const extVersion = context.extension?.packageJSON?.version || "unknown";
+    const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
+    extLog.appendLine(`[${new Date().toISOString()}] 插件启动 v${extVersion}, platform=${process.platform}, pollingInterval=${config.get("pollingInterval", 3)}s, displayCount=${config.get("displayCount", 5)}, alertEnabled=${config.get("alertEnabled", true)}`);
+
     const safeDir = context.globalStorageUri.fsPath;
     fs.mkdirSync(safeDir, { recursive: true });
     ALERT_LOCK_FILE = path.join(safeDir, "alert.lock");
     MAX_MODE_LOCK_FILE = path.join(safeDir, "maxmode.lock");
 
-    // 初始化 SecretStorage，用于加密存储 sessionToken
     initSecretStorage(context.secrets);
 
     // 从 settings.json 迁移明文 token 到 SecretStorage

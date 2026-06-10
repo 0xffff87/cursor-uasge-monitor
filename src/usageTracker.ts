@@ -61,8 +61,7 @@ export class UsageTracker {
 
     async poll(force = false): Promise<boolean> {
         this._pollCount++;
-        this._activePollId = this._pollCount;
-        const pollId = this._activePollId;
+        const pollId = this._pollCount;
         const ts = new Date().toISOString();
 
         if (this._polling) {
@@ -75,9 +74,10 @@ export class UsageTracker {
                 return false;
             }
         }
+        this._activePollId = pollId;
         this._polling = true;
         this._pollStartTime = Date.now();
-        log.appendLine(`[${ts}] poll#${pollId} 开始 (force=${force})`);
+        log.appendLine(`[${ts}] poll#${pollId} 开始 (force=${force}, activePollId=${this._activePollId})`);
 
         try {
             // 读取本地 Max Mode 状态（仅用于 UI 显示）
@@ -184,6 +184,7 @@ export class UsageTracker {
                 return false;
             }
 
+            log.appendLine(`  保存 snapshot (pollId=${pollId}, activePollId=${this._activePollId})`);
             this._lastSnapshot = snapshot;
 
             // 只在完全成功且非恢复期时检查 alert

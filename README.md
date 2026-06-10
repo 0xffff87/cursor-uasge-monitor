@@ -204,6 +204,34 @@ npx @vscode/vsce package --no-dependencies
 
 ## Changelog / 更新日志
 
+### v1.2.5
+
+**Bug Fixes**
+
+- Fixed critical poll race condition: SKIPPED polls no longer overwrite `_activePollId`, preventing all successful poll results from being discarded as "expired". This was the root cause of the UI never updating.
+- Fixed manual token fallback: when the auto-retrieved token from the Cursor database is expired (401), the plugin now correctly falls back to the user's manually set token instead of retrying with the same expired token.
+
+**Enhancements**
+
+- Enhanced diagnostic logging across all log channels:
+  - Extension.log: plugin version, platform, and key config on startup
+  - Monitor.log: token source (auto/manual), `_autoTokenFailed` state, sub-API failure details, 401 retry details
+  - Credentials.log: database path/size, token length, `clearCachedToken()` calls, query method selection
+  - Tracker.log: `activePollId` assignment confirmation, snapshot save confirmation
+
+**Bug 修复**
+
+- 修复轮询过期检查竞态 Bug：SKIPPED 的轮询不再覆盖 `_activePollId`，解决了所有成功获取的数据被判定为"已过期"而丢弃、UI 永远不刷新的问题。
+- 修复手动 Token 不生效的 Bug：当自动获取的 Token 过期（API 返回 401）时，重试现在会正确 fallback 到用户手动设置的 Token，而不是反复使用同一个过期 Token。
+
+**优化**
+
+- 增强各日志通道的诊断输出：
+  - Extension.log：启动时输出插件版本号、平台、关键配置
+  - Monitor.log：Token 来源（自动/手动）、401 重试详情、子 API 具体失败环节
+  - Credentials.log：数据库路径/大小、Token 长度、clearCachedToken 调用记录
+  - Tracker.log：activePollId 设置确认、snapshot 保存确认
+
 ### v1.2.3
 
 **Enhancements**

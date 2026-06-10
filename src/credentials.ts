@@ -11,6 +11,7 @@ let cachedAccessToken: string | null = null;
 let cachedUserId: string | null = null;
 
 export function clearCachedToken(): void {
+    log.appendLine(`清除缓存 token (had userId=${!!cachedUserId}, had accessToken=${!!cachedAccessToken})`);
     cachedAccessToken = null;
     cachedUserId = null;
 }
@@ -58,6 +59,9 @@ export async function getAccessToken(forceRefresh = false): Promise<string | nul
         return null;
     }
 
+    const dbSize = fs.statSync(dbPath).size;
+    log.appendLine(`数据库路径: ${dbPath} (${(dbSize / 1024 / 1024).toFixed(1)}MB)`);
+
     const keys = [
         "cursorAuth/accessToken",
     ];
@@ -66,9 +70,11 @@ export async function getAccessToken(forceRefresh = false): Promise<string | nul
         try {
             const token = await queryDb(dbPath, key);
             if (token) {
-                log.appendLine(`通过 key "${key}" 获取到 accessToken`);
+                log.appendLine(`通过 key "${key}" 获取到 accessToken (长度=${token.length})`);
                 cachedAccessToken = token;
                 return token;
+            } else {
+                log.appendLine(`通过 key "${key}" 查询结果为空`);
             }
         } catch (err) {
             log.appendLine(`通过 key "${key}" 查询失败: ${err}`);
@@ -83,11 +89,13 @@ async function queryDb(dbPath: string, key: string): Promise<string | null> {
     try {
         const dbSize = fs.statSync(dbPath).size;
         if (dbSize >= MAX_SQLJS_DB_SIZE) {
+            log.appendLine(`数据库过大 (${(dbSize / 1024 / 1024).toFixed(1)}MB >= ${MAX_SQLJS_DB_SIZE / 1024 / 1024}MB)，使用 Python 查询 (key=${key})`);
             return await queryDbViaPython(dbPath, key);
         }
         return await queryDbViaSqlJs(dbPath, key);
     } catch (error) {
         if (isFileTooLargeError(error)) {
+            log.appendLine(`sql.js 文件过大异常，回退到 Python (key=${key})`);
             return await queryDbViaPython(dbPath, key);
         }
         log.appendLine(`queryDb 异常: ${error}`);

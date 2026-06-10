@@ -58,36 +58,46 @@ function log(msg: string) {
 
 const COOKIE_SAFE_RE = /^[A-Za-z0-9._~%:+-]+$/;
 
-async function getSessionToken(): Promise<{ userId: string; cookieValue: string } | null> {
-    // 优先从本地 Cursor 数据库自动获取
-    const userId = await getUserId();
-    const accessToken = userId ? await getAccessToken() : null;
+let _autoTokenFailed = false;
 
-    if (userId && accessToken) {
-        const cookieValue = `${userId}%3A%3A${accessToken}`;
-        if (!COOKIE_SAFE_RE.test(cookieValue)) {
-            log("凭证含非法字符，拒绝使用");
-            return null;
+async function getSessionToken(): Promise<{ userId: string; cookieValue: string } | null> {
+    if (!_autoTokenFailed) {
+        const userId = await getUserId();
+        const accessToken = userId ? await getAccessToken() : null;
+        log(`token 获取: auto userId=${userId ? "✓" : "✗"}, accessToken=${accessToken ? "✓" : "✗"}`);
+
+        if (userId && accessToken) {
+            const cookieValue = `${userId}%3A%3A${accessToken}`;
+            if (!COOKIE_SAFE_RE.test(cookieValue)) {
+                log("凭证含非法字符，拒绝使用");
+            } else {
+                log(`token 来源: 自动 (userId=${userId.substring(0, 10)}...)`);
+                return { userId, cookieValue };
+            }
         }
-        return { userId, cookieValue };
+    } else {
+        log("token 获取: 跳过自动获取 (_autoTokenFailed=true)，直接尝试手动 token");
     }
 
-    // 自动获取失败时，回退到用户手动设置的 token（SecretStorage 加密存储）
     const manualToken = await getSecretToken();
+    log(`token 获取: 手动 token ${manualToken ? "已设置" : "未设置"}`);
     if (manualToken) {
         if (!COOKIE_SAFE_RE.test(manualToken)) {
             log("手动 token 含非法字符，拒绝使用");
+            _autoTokenFailed = false;
             return null;
         }
-        log("自动获取失败，使用手动设置的 token");
+        _autoTokenFailed = false;
         const manualUserId = manualToken.split("%3A%3A")[0];
         if (!/^user_[a-zA-Z0-9]{20,}$/.test(manualUserId)) {
-            log("手动 token 中 userId 格式无效");
+            log(`手动 token 中 userId 格式无效: ${manualUserId.substring(0, 10)}...`);
             return null;
         }
+        log(`token 来源: 手动 (userId=${manualUserId.substring(0, 10)}...)`);
         return { userId: manualUserId, cookieValue: manualToken };
     }
 
+    _autoTokenFailed = false;
     log("无法获取 Session Token（自动和手动均失败）");
     return null;
 }
@@ -200,18 +210,30 @@ interface TeamSpendResult {
 
 async function fetchTeamSpendData(cookieValue: string): Promise<TeamSpendResult | null> {
     const teamsData = await httpPost("https://cursor.com/api/dashboard/teams", {}, cookieValue);
-    if (!teamsData || !teamsData.teams || teamsData.teams.length === 0) return null;
+    if (!teamsData || !teamsData.teams || teamsData.teams.length === 0) {
+        log("团队数据: /teams 无数据或无团队");
+        return null;
+    }
 
     const teamId = teamsData.teams[0].id;
 
     const meData = await httpGet("https://cursor.com/api/auth/me", cookieValue);
-    if (!meData || !meData.id) return null;
+    if (!meData || !meData.id) {
+        log("团队数据: /auth/me 无数据");
+        return null;
+    }
 
     const spendData = await httpPost("https://cursor.com/api/dashboard/get-team-spend", { teamId }, cookieValue);
-    if (!spendData || !spendData.teamMemberSpend) return null;
+    if (!spendData || !spendData.teamMemberSpend) {
+        log("团队数据: /get-team-spend 无数据");
+        return null;
+    }
 
     const mySpend = spendData.teamMemberSpend.find((m: any) => m.userId === meData.id);
-    if (!mySpend) return null;
+    if (!mySpend) {
+        log(`团队数据: 未找到当前用户 (userId=${meData.id.substring(0, 10)}...) 的花费记录，成员数=${spendData.teamMemberSpend.length}`);
+        return null;
+    }
 
     return {
         spentDollars: (mySpend.spendCents || 0) / 100,
@@ -271,8 +293,9 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
                 res.resume();
                 log(`${method} ${url} → 401 认证失败，清除缓存 token 并重试`);
                 clearCachedToken();
+                _autoTokenFailed = true;
                 if (retryOnAuth) { retryRequest(method, url, body).then(safeResolve); }
-                else { log(`${method} ${url} → 401 重试后仍失败`); safeResolve(null); }
+                else { _autoTokenFailed = false; log(`${method} ${url} → 401 重试后仍失败`); safeResolve(null); }
                 return;
             }
 
@@ -340,7 +363,11 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
 }
 
 async function retryRequest(method: string, url: string, body: any | null): Promise<any | null> {
+    log(`401 重试: ${method} ${url}`);
     const session = await getSessionToken();
-    if (!session) return null;
+    if (!session) {
+        log("401 重试: 无可用 token，放弃");
+        return null;
+    }
     return makeRequest(method, url, body, session.cookieValue, false);
 }
