@@ -1,4 +1,4 @@
-# Cursor Usage Monitor
+﻿# Cursor Usage Monitor
 
 [English](#english) | [中文](#中文)
 
@@ -215,10 +215,18 @@ npx @vscode/vsce package --no-dependencies
 **Changes**
 
 - Changed default polling interval from 3 seconds to 30 seconds. On slower networks, a 3-second interval could cause the plugin to stay in a perpetual loading state since the previous request hadn't completed before the next one started.
+- Adjusted default alert thresholds to reduce noise:
+  - `newSession`: 0 → 2 (triggers when 2+ new requests appear in a single poll)
+  - `includedRequests`: 0 → 10 (triggers when included requests change by 10+)
+  - `onDemandSpending`: 0 → 1 (triggers when spending increases by $1+)
 
 **变更**
 
 - 默认轮询间隔从 3 秒改为 30 秒。部分用户网络较慢时，3 秒的刷新间隔会导致上一次请求尚未完成就发起下一次，使插件一直处于 loading 状态。
+- 调整提醒阈值默认值，减少频繁弹窗干扰：
+  - `newSession`：0 → 2（单次轮询新增 2 个以上请求时才提醒）
+  - `includedRequests`：0 → 10（Included Requests 变化 10 以上时才提醒）
+  - `onDemandSpending`：0 → 1（On-Demand 花费增加 $1 以上时才提醒）
 
 ### v1.2.5
 
