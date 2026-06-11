@@ -10,7 +10,7 @@
   "cmd.configureAlerts": "Configure Usage Alerts",
   "config.title": "Cursor Usage Monitor",
   "config.displayCount": "Number of recent usage entries to display in sidebar (default: 5)",
-  "config.pollingInterval": "Polling interval in seconds during AI response (default: 3s)",
+  "config.pollingInterval": "Polling interval in seconds during AI response (default: 30s)",
   "config.showTokenDetail": "Show token input/output breakdown for each usage entry",
   "config.maxModeAlert": "Show a warning dialog when Max Mode (thinking mode) is enabled, to prevent accidental premium usage",
   "config.alertEnabled": "Enable usage change alerts (popup notification when monitored values exceed thresholds)",

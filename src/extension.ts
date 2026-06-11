@@ -138,7 +138,7 @@ async function tryAcquireAlertLock(lockFile: string, dedupeMs = ALERT_DEDUPE_MS)
 export async function activate(context: vscode.ExtensionContext) {
     const extVersion = context.extension?.packageJSON?.version || "unknown";
     const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
-    extLog.appendLine(`[${new Date().toISOString()}] 插件启动 v${extVersion}, platform=${process.platform}, pollingInterval=${config.get("pollingInterval", 3)}s, displayCount=${config.get("displayCount", 5)}, alertEnabled=${config.get("alertEnabled", true)}`);
+    extLog.appendLine(`[${new Date().toISOString()}] 插件启动 v${extVersion}, platform=${process.platform}, pollingInterval=${config.get("pollingInterval", 30)}s, displayCount=${config.get("displayCount", 5)}, alertEnabled=${config.get("alertEnabled", true)}`);
 
     const safeDir = context.globalStorageUri.fsPath;
     fs.mkdirSync(safeDir, { recursive: true });
@@ -528,7 +528,7 @@ while True:
     context.subscriptions.push(
         vscode.commands.registerCommand("cursor-usage-monitor.setPollingInterval", async () => {
             const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
-            const current = config.get<number>("pollingInterval", 3);
+            const current = config.get<number>("pollingInterval", 30);
 
             const input = await vscode.window.showInputBox({
                 prompt: vscode.l10n.t("Set polling interval in seconds (1-60)"),
@@ -806,7 +806,7 @@ while True:
                 const item = thresholdItems.find((t) => t.id === thresholdPick.id)!;
                 const current = config.get<number>(item.configKey, 0);
 
-                const pollingSeconds = config.get<number>("pollingInterval", 3);
+                const pollingSeconds = config.get<number>("pollingInterval", 30);
                 const input = await vscode.window.showInputBox({
                     prompt: `${item.label} ${vscode.l10n.t("threshold (change per {0}s poll cycle)", pollingSeconds)} (${item.min}-${item.max})`,
                     value: String(current),
@@ -852,7 +852,7 @@ function startPolling() {
     }
 
     const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
-    const pollingInterval = Math.max(1, Math.min(60, config.get<number>("pollingInterval", 3) || 3)) * 1000;
+    const pollingInterval = Math.max(1, Math.min(60, config.get<number>("pollingInterval", 30) || 30)) * 1000;
 
     extLog.appendLine(`[${new Date().toISOString()}] 启动轮询定时器，间隔=${pollingInterval}ms`);
 

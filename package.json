@@ -2,7 +2,7 @@
   "name": "cursor-usage-monitor",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "publisher": "kso",
   "license": "MIT",
   "icon": "icon.png",
@@ -176,7 +176,7 @@
         },
         "cursorUsageMonitor.pollingInterval": {
           "type": "number",
-          "default": 3,
+          "default": 30,
           "minimum": 1,
           "maximum": 60,
           "description": "%config.pollingInterval%"
@@ -233,19 +233,19 @@
         },
         "cursorUsageMonitor.alertThreshold.newSession": {
           "type": "number",
-          "default": 0,
+          "default": 2,
           "minimum": 0,
           "description": "%config.alertThreshold.newSession%"
         },
         "cursorUsageMonitor.alertThreshold.includedRequests": {
           "type": "number",
-          "default": 0,
+          "default": 10,
           "minimum": 0,
           "description": "%config.alertThreshold.includedRequests%"
         },
         "cursorUsageMonitor.alertThreshold.onDemandSpending": {
           "type": "number",
-          "default": 0,
+          "default": 1,
           "minimum": 0,
           "description": "%config.alertThreshold.onDemandSpending%"
         },

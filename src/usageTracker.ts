@@ -228,7 +228,7 @@ export class UsageTracker {
         if (items.includes("newSession")) {
             const prevTimestamps = new Set(prev.events.map(e => e.timestamp));
             const newCount = curr.events.filter(e => !prevTimestamps.has(e.timestamp)).length;
-            const threshold = config.get<number>("alertThreshold.newSession", 0);
+            const threshold = config.get<number>("alertThreshold.newSession", 2);
             if (newCount > 0 && newCount >= threshold) {
                 alerts.push({ type: "newSession", delta: newCount, threshold });
             }
@@ -240,7 +240,7 @@ export class UsageTracker {
                 log.appendLine(`  includedSource 切换 (${prev.includedSource} → ${curr.includedSource})，跳过 includedRequests alert`);
             } else {
                 const delta = curr.includedUsed - prev.includedUsed;
-                const threshold = config.get<number>("alertThreshold.includedRequests", 0);
+                const threshold = config.get<number>("alertThreshold.includedRequests", 10);
                 if (delta > 0 && delta >= threshold) {
                     alerts.push({ type: "includedRequests", delta, threshold });
                 }
@@ -249,7 +249,7 @@ export class UsageTracker {
 
         if (items.includes("onDemandSpending")) {
             const delta = curr.onDemandSpentDollars - prev.onDemandSpentDollars;
-            const threshold = config.get<number>("alertThreshold.onDemandSpending", 0);
+            const threshold = config.get<number>("alertThreshold.onDemandSpending", 1);
             if (delta > 0 && delta >= threshold) {
                 alerts.push({ type: "onDemandSpending", delta, threshold });
             }

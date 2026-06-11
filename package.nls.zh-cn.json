@@ -10,7 +10,7 @@
   "cmd.configureAlerts": "配置用量提醒",
   "config.title": "Cursor 用量监控",
   "config.displayCount": "侧边栏显示的最近用量记录条数（默认 5 条）",
-  "config.pollingInterval": "AI 回复过程中的用量轮询间隔（秒，默认 3 秒）",
+  "config.pollingInterval": "AI 回复过程中的用量轮询间隔（秒，默认 30 秒）",
   "config.showTokenDetail": "是否在每条消耗记录中显示 Tokens 输入/输出明细",
   "config.maxModeAlert": "开启 Max Mode（思考模式）时弹窗警告，防止意外消耗高级请求额度",
   "config.alertEnabled": "启用用量变化提醒（监控值超过阈值时弹窗通知）",

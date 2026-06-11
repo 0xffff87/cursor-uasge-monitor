@@ -48,14 +48,17 @@ To find your token: Open browser DevTools on [cursor.com](https://cursor.com), g
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `displayCount` | 5 | Number of recent usage entries to display |
-| `pollingInterval` | 3 | Polling interval in seconds |
+| `pollingInterval` | 30 | Polling interval in seconds |
 | `idleInterval` | 60 | Idle polling interval in seconds |
 | `showTokenDetail` | false | Show input/output token breakdown |
 | `hiddenItems` | [] | Items hidden from sidebar (includedRequests, onDemandUsage) |
 | `statusBarItems` | [] | Items pinned to status bar |
-| `alertEnabled` | false | Enable usage change alerts |
-| `alertItems` | ["newSession"] | Items to monitor for alerts |
-| `alertThreshold.*` | varies | Threshold values for each alert type |
+| `alertEnabled` | true | Enable usage change alerts |
+| `alertItems` | ["newSession", "includedRequests", "onDemandSpending"] | Items to monitor for alerts |
+| `alertThreshold.newSession` | 2 | New usage requests threshold |
+| `alertThreshold.includedRequests` | 10 | Included requests change threshold |
+| `alertThreshold.onDemandSpending` | 1 | On-demand spending change threshold ($) |
+| `alertThreshold.totalTokens` | 100000 | Total tokens change threshold |
 
 ### Sidebar Display
 
@@ -147,14 +150,17 @@ npx @vscode/vsce package --no-dependencies
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | `displayCount` | 5 | 显示最近用量记录条数 |
-| `pollingInterval` | 3 | 轮询间隔（秒） |
+| `pollingInterval` | 30 | 轮询间隔（秒） |
 | `idleInterval` | 60 | 空闲时的轮询间隔（秒） |
 | `showTokenDetail` | false | 是否显示 Token 输入/输出明细 |
 | `hiddenItems` | [] | 侧边栏隐藏的项目 |
 | `statusBarItems` | [] | 固定到状态栏的项目 |
-| `alertEnabled` | false | 启用用量变化提醒 |
-| `alertItems` | ["newSession"] | 提醒监控项 |
-| `alertThreshold.*` | 各不相同 | 各项提醒阈值 |
+| `alertEnabled` | true | 启用用量变化提醒 |
+| `alertItems` | ["newSession", "includedRequests", "onDemandSpending"] | 提醒监控项 |
+| `alertThreshold.newSession` | 2 | 新增调用请求阈值 |
+| `alertThreshold.includedRequests` | 10 | Included Requests 变化阈值 |
+| `alertThreshold.onDemandSpending` | 1 | On-Demand 花费变化阈值（$） |
+| `alertThreshold.totalTokens` | 100000 | Token 总量变化阈值 |
 
 ### 侧边栏显示效果
 
@@ -204,6 +210,16 @@ npx @vscode/vsce package --no-dependencies
 
 ## Changelog / 更新日志
 
+### v1.2.6
+
+**Changes**
+
+- Changed default polling interval from 3 seconds to 30 seconds. On slower networks, a 3-second interval could cause the plugin to stay in a perpetual loading state since the previous request hadn't completed before the next one started.
+
+**变更**
+
+- 默认轮询间隔从 3 秒改为 30 秒。部分用户网络较慢时，3 秒的刷新间隔会导致上一次请求尚未完成就发起下一次，使插件一直处于 loading 状态。
+
 ### v1.2.5
 
 **Bug Fixes**
@@ -231,6 +247,16 @@ npx @vscode/vsce package --no-dependencies
   - Monitor.log：Token 来源（自动/手动）、401 重试详情、子 API 具体失败环节
   - Credentials.log：数据库路径/大小、Token 长度、clearCachedToken 调用记录
   - Tracker.log：activePollId 设置确认、snapshot 保存确认
+
+### v1.2.4
+
+**Security Fixes**
+
+- Fixed several security vulnerabilities
+
+**安全修复**
+
+- 修复了若干安全问题
 
 ### v1.2.3
 
