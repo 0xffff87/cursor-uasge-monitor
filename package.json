@@ -2,7 +2,7 @@
   "name": "cursor-usage-monitor",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "publisher": "kso",
   "license": "MIT",
   "icon": "icon.png",
@@ -22,6 +22,12 @@
   "extensionKind": [
     "ui"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Reads local Cursor session data and calls cursor.com APIs."
+    }
+  },
   "main": "./out/extension.js",
   "l10n": "./l10n",
   "contributes": {
@@ -80,6 +86,16 @@
         "title": "%cmd.showAllItems%"
       },
       {
+        "command": "cursor-usage-monitor.installBlockHook",
+        "title": "%cmd.installBlockHook%",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "cursor-usage-monitor.uninstallBlockHook",
+        "title": "%cmd.uninstallBlockHook%",
+        "icon": "$(shield)"
+      },
+      {
         "command": "cursor-usage-monitor.pinToStatusBar",
         "title": "%cmd.pinToStatusBar%"
       },
@@ -96,11 +112,6 @@
           "group": "navigation"
         },
         {
-          "command": "cursor-usage-monitor.setToken",
-          "when": "view == cursorUsageView",
-          "group": "navigation"
-        },
-        {
           "command": "cursor-usage-monitor.setPollingInterval",
           "when": "view == cursorUsageView",
           "group": "navigation"
@@ -109,6 +120,21 @@
           "command": "cursor-usage-monitor.configureAlerts",
           "when": "view == cursorUsageView",
           "group": "navigation"
+        },
+        {
+          "command": "cursor-usage-monitor.setToken",
+          "when": "view == cursorUsageView",
+          "group": "1_more"
+        },
+        {
+          "command": "cursor-usage-monitor.installBlockHook",
+          "when": "view == cursorUsageView && !cursorUsageMonitor.blockHookInstalled",
+          "group": "1_more"
+        },
+        {
+          "command": "cursor-usage-monitor.uninstallBlockHook",
+          "when": "view == cursorUsageView && cursorUsageMonitor.blockHookInstalled",
+          "group": "1_more"
         },
         {
           "command": "cursor-usage-monitor.showAllItems",
@@ -177,7 +203,7 @@
         "cursorUsageMonitor.pollingInterval": {
           "type": "number",
           "default": 30,
-          "minimum": 1,
+          "minimum": 10,
           "maximum": 60,
           "description": "%config.pollingInterval%"
         },
@@ -198,6 +224,7 @@
         "cursorUsageMonitor.hiddenEventTimestamps": {
           "type": "array",
           "default": [],
+          "maxItems": 1000,
           "items": {
             "type": "number"
           },
@@ -216,6 +243,11 @@
           "type": "boolean",
           "default": true,
           "description": "%config.maxModeAlert%"
+        },
+        "cursorUsageMonitor.blockMaxModeChat": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.blockMaxModeChat%"
         },
         "cursorUsageMonitor.alertEnabled": {
           "type": "boolean",

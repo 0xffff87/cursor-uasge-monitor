@@ -20,6 +20,9 @@ export async function getSecretToken(): Promise<string | undefined> {
 
 export async function storeSecretToken(token: string): Promise<void> {
     if (!secretStorage) return;
+    if (token.length > 4096 || !COOKIE_SAFE_RE.test(token) || !token.includes("%3A%3A")) return;
+    const userId = token.split("%3A%3A")[0];
+    if (!/^user_[a-zA-Z0-9]{20,}$/.test(userId)) return;
     await secretStorage.store(SECRET_KEY, token);
 }
 
@@ -67,12 +70,16 @@ async function getSessionToken(): Promise<{ userId: string; cookieValue: string 
         log(`token 获取: auto userId=${userId ? "✓" : "✗"}, accessToken=${accessToken ? "✓" : "✗"}`);
 
         if (userId && accessToken) {
-            const cookieValue = `${userId}%3A%3A${accessToken}`;
-            if (!COOKIE_SAFE_RE.test(cookieValue)) {
-                log("凭证含非法字符，拒绝使用");
+            if (!/^user_[a-zA-Z0-9]{20,}$/.test(userId) || userId.length > 128) {
+                log("自动 userId 格式无效，拒绝使用");
             } else {
-                log(`token 来源: 自动 (userId=${userId.substring(0, 10)}...)`);
-                return { userId, cookieValue };
+                const cookieValue = `${userId}%3A%3A${accessToken}`;
+                if (!COOKIE_SAFE_RE.test(cookieValue)) {
+                    log("凭证含非法字符，拒绝使用");
+                } else {
+                    log("token 来源: 自动");
+                    return { userId, cookieValue };
+                }
             }
         }
     } else {
@@ -90,10 +97,10 @@ async function getSessionToken(): Promise<{ userId: string; cookieValue: string 
         _autoTokenFailed = false;
         const manualUserId = manualToken.split("%3A%3A")[0];
         if (!/^user_[a-zA-Z0-9]{20,}$/.test(manualUserId)) {
-            log(`手动 token 中 userId 格式无效: ${manualUserId.substring(0, 10)}...`);
+            log("手动 token 中 userId 格式无效");
             return null;
         }
-        log(`token 来源: 手动 (userId=${manualUserId.substring(0, 10)}...)`);
+        log("token 来源: 手动");
         return { userId: manualUserId, cookieValue: manualToken };
     }
 
@@ -215,7 +222,16 @@ async function fetchTeamSpendData(cookieValue: string): Promise<TeamSpendResult 
         return null;
     }
 
-    const teamId = teamsData.teams[0].id;
+    const rawTeamId = teamsData.teams[0].id;
+    if (rawTeamId == null || (typeof rawTeamId !== "string" && typeof rawTeamId !== "number")) {
+        log(`团队数据: teamId 格式无效 (type=${typeof rawTeamId})`);
+        return null;
+    }
+    const teamId = String(rawTeamId);
+    if (teamId.length === 0 || teamId.length > 256) {
+        log(`团队数据: teamId 长度异常 (len=${teamId.length})`);
+        return null;
+    }
 
     const meData = await httpGet("https://cursor.com/api/auth/me", cookieValue);
     if (!meData || !meData.id) {
@@ -229,9 +245,10 @@ async function fetchTeamSpendData(cookieValue: string): Promise<TeamSpendResult 
         return null;
     }
 
-    const mySpend = spendData.teamMemberSpend.find((m: any) => m.userId === meData.id);
+    const myId = String(meData.id);
+    const mySpend = spendData.teamMemberSpend.find((m: any) => String(m.userId) === myId);
     if (!mySpend) {
-        log(`团队数据: 未找到当前用户 (userId=${meData.id.substring(0, 10)}...) 的花费记录，成员数=${spendData.teamMemberSpend.length}`);
+        log(`团队数据: 未找到当前用户的花费记录 (members=${spendData.teamMemberSpend.length})`);
         return null;
     }
 
@@ -308,10 +325,18 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
                     }
                 });
                 res.on("end", () => {
-                    log(`${method} ${url} → HTTP ${res.statusCode}: ${errData.substring(0, 500)}`);
+                    const isVercelBlock = res.statusCode === 403
+                        && (errData.includes("Vercel Security Checkpoint") || errData.includes("vercel") || errData.includes("_vercel_"));
+                    if (isVercelBlock) {
+                        log(`${method} ${url} → 403 Vercel 安全检查点拦截`);
+                    } else {
+                        log(`${method} ${url} → HTTP ${res.statusCode}`);
+                    }
                     if (res.statusCode! >= 500 && serverRetryCount < 2) {
-                        const delay = (serverRetryCount + 1) * 3000;
-                        log(`${method} ${url} → 服务器错误，${delay / 1000}s 后第 ${serverRetryCount + 1} 次重试`);
+                        const baseDelay = (serverRetryCount + 1) * 3000;
+                        const jitter = Math.floor(Math.random() * 1000);
+                        const delay = baseDelay + jitter;
+                        log(`${method} ${url} → 服务器错误，${(delay / 1000).toFixed(1)}s 后第 ${serverRetryCount + 1} 次重试`);
                         setTimeout(() => {
                             makeRequest(method, url, body, cookieValue, retryOnAuth, serverRetryCount + 1).then(safeResolve);
                         }, delay);
@@ -324,7 +349,7 @@ function makeRequest(method: string, url: string, body: any | null, cookieValue:
 
             if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400) {
                 res.resume();
-                log(`${method} ${url} → ${res.statusCode} 重定向到 ${res.headers.location || "(无 location)"}，已拒绝跟随`);
+                log(`${method} ${url} → ${res.statusCode} 重定向已拒绝`);
                 safeResolve(null);
                 return;
             }

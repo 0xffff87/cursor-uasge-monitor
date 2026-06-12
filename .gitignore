@@ -1,4 +1,7 @@
-out/
+﻿out/
 node_modules/
 *.vsix
 .cursor/
+*.log
+*.bak
+.DS_Store

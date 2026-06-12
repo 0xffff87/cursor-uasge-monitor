@@ -12,7 +12,7 @@ A VS Code / Cursor IDE extension that displays your Cursor AI usage directly in 
 
 - **Monthly Summary** — View Included Requests and On-Demand Usage with reset countdown
 - **Recent Usage** — Detailed per-conversation breakdown: model, tokens, requests, and cost
-- **Auto Refresh** — Configurable polling interval (default: 3 seconds)
+- **Auto Refresh** — Configurable polling interval (default: 30 seconds) with exponential backoff on failures
 - **Expandable Details** — Click any usage entry to see tokens, requests, and cost breakdown
 - **Token I/O Toggle** — Optionally show input/output token breakdown (right-click Tokens row)
 - **Context Menus** — Right-click to configure display count, polling interval, and session token
@@ -59,6 +59,7 @@ To find your token: Open browser DevTools on [cursor.com](https://cursor.com), g
 | `alertThreshold.includedRequests` | 10 | Included requests change threshold |
 | `alertThreshold.onDemandSpending` | 1 | On-demand spending change threshold ($) |
 | `alertThreshold.totalTokens` | 100000 | Total tokens change threshold |
+| `blockMaxModeChat` | false | Block sending messages to AI when MAX Mode is enabled |
 
 ### Sidebar Display
 
@@ -96,6 +97,16 @@ Configure alerts to get notified when usage changes exceed thresholds:
 
 > Thresholds are checked on each poll cycle (every `pollingInterval` seconds). The threshold value represents the **change delta** between two consecutive polls, not a cumulative or absolute value. For example, `onDemandSpending` threshold of `1.0` means an alert triggers when spending increases by $1.00 or more between two consecutive checks.
 
+### Logs
+
+| Log Channel | Location | Content |
+|-------------|----------|---------|
+| `Cursor Usage Monitor - Extension` | Output Panel (`Ctrl+Shift+U`) | Plugin lifecycle, config, MAX Mode events |
+| `Cursor Usage Monitor` | Output Panel | HTTP API requests and responses |
+| `Cursor Usage Monitor - Tracker` | Output Panel | Polling state, snapshots, alerts |
+| `Cursor Usage Monitor - Credentials` | Output Panel | Token detection, database queries |
+| Hook script | `globalStorage/kso.cursor-usage-monitor/hook.log` | MAX Mode block hook invocations |
+
 ### Build from Source
 
 ```bash
@@ -114,7 +125,7 @@ npx @vscode/vsce package --no-dependencies
 
 - **本月汇总** — 查看 Included Requests 和 On-Demand Usage，含重置倒计时
 - **最近消耗** — 每次对话的详细信息：模型、Tokens、请求数、费用
-- **自动刷新** — 可配置的轮询间隔（默认 3 秒）
+- **自动刷新** — 可配置的轮询间隔（默认 30 秒），失败时自动指数退避
 - **可展开详情** — 点击任意用量记录查看 Tokens、请求数和费用明细
 - **输入/输出切换** — 右键 Tokens 行可切换显示输入/输出 Token 明细
 - **右键菜单** — 右键可配置显示条数、刷新间隔和 Session Token
@@ -161,6 +172,7 @@ npx @vscode/vsce package --no-dependencies
 | `alertThreshold.includedRequests` | 10 | Included Requests 变化阈值 |
 | `alertThreshold.onDemandSpending` | 1 | On-Demand 花费变化阈值（$） |
 | `alertThreshold.totalTokens` | 100000 | Token 总量变化阈值 |
+| `blockMaxModeChat` | false | 开启后在 MAX Mode 激活时阻止向 AI 发送消息 |
 
 ### 侧边栏显示效果
 
@@ -198,6 +210,16 @@ npx @vscode/vsce package --no-dependencies
 
 > 阈值在每次轮询时检查（间隔为 `pollingInterval` 秒）。阈值表示的是**两次轮询之间的变化量**，而非累计值或绝对值。例如 `onDemandSpending` 阈值设为 `1.0`，表示当两次检查之间花费增加了 $1.00 或以上时触发提醒。
 
+### 日志位置
+
+| 日志通道 | 位置 | 内容 |
+|----------|------|------|
+| `Cursor Usage Monitor - Extension` | 输出面板（`Ctrl+Shift+U`） | 插件生命周期、配置、MAX Mode 事件 |
+| `Cursor Usage Monitor` | 输出面板 | HTTP API 请求和响应 |
+| `Cursor Usage Monitor - Tracker` | 输出面板 | 轮询状态、快照、提醒 |
+| `Cursor Usage Monitor - Credentials` | 输出面板 | Token 检测、数据库查询 |
+| Hook 脚本 | `globalStorage/kso.cursor-usage-monitor/hook.log` | MAX Mode 拦截 Hook 调用记录 |
+
 ### 从源码构建
 
 ```bash
@@ -209,6 +231,32 @@ npx @vscode/vsce package --no-dependencies
 ---
 
 ## Changelog / 更新日志
+
+### v1.2.7
+
+**New Features**
+
+- **Block MAX Mode Chat**: New option `blockMaxModeChat` to prevent sending messages to AI when MAX Mode is enabled. Uses Cursor Hooks (`beforeSubmitPrompt`) to intercept and block message submission, with a notification indicating the plugin blocked the action
+- New command "Install/Remove MAX Mode Block Hook" to manage the hook lifecycle from the Command Palette
+
+**Bug Fixes**
+
+- Fixed Vercel Security Checkpoint (HTTP 403) blocking all API requests when polling too frequently
+- Added exponential backoff: on consecutive failures, the polling interval doubles each time (up to 5 minutes), then recovers to the base interval on success
+- Raised the minimum `pollingInterval` from 1 second to 10 seconds to prevent triggering Vercel's rate limiting
+- Old user configs with `pollingInterval` below 10 are automatically migrated to 10 on plugin startup
+
+**新功能**
+
+- **禁止 MAX Mode 对话**：新增 `blockMaxModeChat` 选项，开启后在 MAX Mode 激活时阻止向 AI 发送消息。通过 Cursor Hooks（`beforeSubmitPrompt`）拦截消息发送，并弹窗提示是本插件阻止的
+- 新增命令"安装/卸载 MAX Mode 拦截 Hook"，可在命令面板中管理 Hook 的安装和移除
+
+**修复**
+
+- 修复轮询频率过高时触发 Vercel 安全检查 (HTTP 403) 导致所有 API 请求被拦截的问题
+- 新增指数退避机制：连续失败时轮询间隔按 2^n 倍递增（最大 5 分钟），成功后自动恢复到基础间隔
+- `pollingInterval` 最小值从 1 秒提高到 10 秒，避免触发 Vercel 频率限制
+- 旧版本中设置的低于 10 秒的轮询间隔会在插件启动时自动迁移为 10 秒
 
 ### v1.2.6
 

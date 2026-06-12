@@ -2,6 +2,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import * as crypto from "crypto";
 import { execFileSync, spawn, ChildProcess } from "child_process";
 import { UsageTracker, AlertChange } from "./usageTracker";
 import { getDbPath } from "./api";
@@ -10,8 +11,11 @@ import { initSecretStorage, storeSecretToken, deleteSecretToken, getSecretToken 
 
 let ALERT_LOCK_FILE = "";
 let MAX_MODE_LOCK_FILE = "";
+let BLOCK_STATE_FILE = "";
 const ALERT_DEDUPE_MS = 60000;
 const ALERT_JITTER_MS = 2000;
+const MIN_POLLING_INTERVAL_S = 10;
+const MAX_BACKOFF_MS = 300000;
 
 let pollTimer: NodeJS.Timeout | undefined;
 let tracker: UsageTracker;
@@ -135,6 +139,238 @@ async function tryAcquireAlertLock(lockFile: string, dedupeMs = ALERT_DEDUPE_MS)
     }
 }
 
+function writeBlockState(maxModeOn: boolean) {
+    if (!BLOCK_STATE_FILE) return;
+    const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
+    const blockEnabled = config.get<boolean>("blockMaxModeChat", false);
+    try {
+        fs.writeFileSync(BLOCK_STATE_FILE, JSON.stringify({
+            blockEnabled,
+            maxModeOn,
+            lang: vscode.env.language,
+            updatedAt: Date.now(),
+        }), { encoding: "utf-8", mode: 0o600 });
+    } catch { /* ignore */ }
+}
+
+function getCursorUserDir(): string {
+    return path.join(os.homedir(), ".cursor");
+}
+
+const HOOK_SCRIPT_NAME = "cursor-usage-monitor-block-max-mode.js";
+const HOOK_CMD_NAME = "cursor-usage-monitor-block-max-mode.cmd";
+
+function getHookScriptPath(): string {
+    return path.join(getCursorUserDir(), "hooks", HOOK_SCRIPT_NAME);
+}
+
+function getHookCmdPath(): string {
+    return path.join(getCursorUserDir(), "hooks", HOOK_CMD_NAME);
+}
+
+function getHooksJsonPath(): string {
+    return path.join(getCursorUserDir(), "hooks.json");
+}
+
+function isOurHook(h: unknown): boolean {
+    if (!h || typeof h !== "object") return false;
+    const cmd = String((h as Record<string, unknown>).command || "");
+    return cmd === `node ./hooks/${HOOK_SCRIPT_NAME}`
+        || cmd === `./hooks/${HOOK_CMD_NAME}`
+        || cmd === `./hooks/${HOOK_SCRIPT_NAME}`
+        || cmd.endsWith(`/${HOOK_SCRIPT_NAME}`)
+        || cmd.endsWith(`/${HOOK_CMD_NAME}`)
+        || cmd.endsWith(`\\${HOOK_SCRIPT_NAME}`)
+        || cmd.endsWith(`\\${HOOK_CMD_NAME}`);
+}
+
+function getHookScriptContent(): string {
+    const stateFilePath = JSON.stringify(BLOCK_STATE_FILE);
+    const logFilePath = JSON.stringify(path.join(path.dirname(BLOCK_STATE_FILE), "hook.log"));
+    const MAX_STDIN = 4 * 1024 * 1024;
+    return [
+        "#!/usr/bin/env node",
+        '"use strict";',
+        'const fs = require("fs");',
+        "",
+        `const LOG_FILE = ${logFilePath};`,
+        `const STATE_FILE = ${stateFilePath};`,
+        `const MAX_STDIN = ${MAX_STDIN};`,
+        "",
+        "function log(msg) {",
+        "    try {",
+        "        try { if (fs.statSync(LOG_FILE).size > 1048576) fs.writeFileSync(LOG_FILE, '', { mode: 0o600 }); } catch {}",
+        '        const ts = new Date().toISOString();',
+        '        fs.appendFileSync(LOG_FILE, ts + " " + msg + "\\n", { mode: 0o600 });',
+        "    } catch {}",
+        "}",
+        "",
+        "async function main() {",
+        '    let input = "";',
+        '    process.stdin.setEncoding("utf-8");',
+        "    for await (const chunk of process.stdin) {",
+        "        input += chunk;",
+        "        if (input.length > MAX_STDIN) { input = input.slice(0, MAX_STDIN); break; }",
+        "    }",
+        "",
+        '    log("Hook invoked, input length=" + input.length);',
+        "",
+        "    try {",
+        "        const stat = fs.statSync(STATE_FILE);",
+        "        if (!stat.isFile() || stat.size > 4096) throw new Error('invalid state file');",
+        '        const state = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));',
+        "        if (state.blockEnabled === true && state.maxModeOn === true) {",
+        '            const zh = (typeof state.lang === "string" && state.lang.startsWith("zh"));',
+        '            const msg = zh',
+        '                ? "\\u26d4 MAX Mode \\u5df2\\u5f00\\u542f\\uff0c\\u6d88\\u606f\\u5df2\\u88ab Cursor Usage Monitor \\u62e6\\u622a\\u3002\\n\\n\\u89e3\\u9664\\u62e6\\u622a\\uff1a\\n1. \\u5728 Cursor \\u8bbe\\u7f6e\\u4e2d\\u5173\\u95ed MAX Mode\\n2. \\u6216\\u5728\\u63d2\\u4ef6\\u8bbe\\u7f6e\\u4e2d\\u7981\\u7528 [\\u7981\\u6b62 MAX Mode \\u5bf9\\u8bdd]"',
+        '                : "\\u26d4 MAX Mode is ON. Message blocked by Cursor Usage Monitor.\\n\\nTo unblock:\\n1. Turn off MAX Mode in Cursor settings\\n2. Or disable [Block MAX Mode Chat] in extension settings";',
+        "            const resp = JSON.stringify({ continue: false, user_message: msg });",
+        '            log("BLOCKED");',
+        "            process.stdout.write(resp);",
+        "            return;",
+        "        }",
+        '        log("ALLOWED");',
+        "    } catch (e) {",
+        '        log("ERROR: " + (e && e.message || e));',
+        "    }",
+        "",
+        '    process.stdout.write(JSON.stringify({ continue: true }));',
+        "}",
+        "",
+        "main().catch((e) => {",
+        '    log("FATAL: " + (e && e.message || e));',
+        '    process.stdout.write(JSON.stringify({ continue: true }));',
+        "});",
+        "",
+    ].join("\n");
+}
+
+function atomicWriteJson(filePath: string, data: unknown): void {
+    const tmpPath = filePath + ".tmp";
+    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
+    fs.renameSync(tmpPath, filePath);
+}
+
+function backupFile(filePath: string): void {
+    try {
+        if (fs.existsSync(filePath)) {
+            fs.copyFileSync(filePath, filePath + ".bak");
+        }
+    } catch { /* best effort */ }
+}
+
+function verifyHookIntegrity(): boolean {
+    const scriptPath = getHookScriptPath();
+    if (!fs.existsSync(scriptPath)) return false;
+    try {
+        const stat = fs.lstatSync(scriptPath);
+        if (stat.isSymbolicLink() || !stat.isFile()) return false;
+        const content = fs.readFileSync(scriptPath, "utf-8");
+        const expected = getHookScriptContent();
+        const actualHash = crypto.createHash("sha256").update(content).digest("hex");
+        const expectedHash = crypto.createHash("sha256").update(expected).digest("hex");
+        return actualHash === expectedHash;
+    } catch {
+        return false;
+    }
+}
+
+function installBlockHook(): void {
+    const hooksDir = path.join(getCursorUserDir(), "hooks");
+    fs.mkdirSync(hooksDir, { recursive: true });
+
+    const scriptContent = getHookScriptContent();
+    fs.writeFileSync(getHookScriptPath(), scriptContent, { mode: 0o700 });
+
+    let hookCommand: string;
+    if (process.platform === "win32") {
+        const nodePath = process.execPath;
+        if (/[&|<>^"%!\r\n]/.test(nodePath)) {
+            throw new Error("Node path contains unsafe characters");
+        }
+        const cmdContent = `@echo off\r\n"${nodePath}" "%~dp0${HOOK_SCRIPT_NAME}"\r\n`;
+        fs.writeFileSync(getHookCmdPath(), cmdContent);
+        hookCommand = `./hooks/${HOOK_CMD_NAME}`;
+    } else {
+        const nodePath = process.execPath;
+        hookCommand = `"${nodePath}" "./hooks/${HOOK_SCRIPT_NAME}"`;
+    }
+
+    const hooksJsonPath = getHooksJsonPath();
+    let hooksJson: Record<string, unknown> = { version: 1, hooks: {} };
+
+    if (fs.existsSync(hooksJsonPath)) {
+        backupFile(hooksJsonPath);
+        try {
+            const parsed = JSON.parse(fs.readFileSync(hooksJsonPath, "utf-8"));
+            if (parsed && typeof parsed === "object") {
+                hooksJson = parsed;
+            }
+        } catch {
+            extLog.appendLine(`[${new Date().toISOString()}] hooks.json 解析失败，从备份恢复`);
+            try {
+                const bakPath = hooksJsonPath + ".bak";
+                if (fs.existsSync(bakPath)) {
+                    const backup = JSON.parse(fs.readFileSync(bakPath, "utf-8"));
+                    if (backup && typeof backup === "object") {
+                        hooksJson = backup;
+                    }
+                }
+            } catch { /* use fresh */ }
+        }
+    }
+
+    const hooks = (hooksJson.hooks && typeof hooksJson.hooks === "object") ? hooksJson.hooks as Record<string, unknown> : {};
+    hooksJson.hooks = hooks;
+    if (!Array.isArray(hooks.beforeSubmitPrompt)) hooks.beforeSubmitPrompt = [];
+
+    hooks.beforeSubmitPrompt = (hooks.beforeSubmitPrompt as unknown[]).filter(
+        (h: unknown) => !isOurHook(h)
+    );
+
+    (hooks.beforeSubmitPrompt as unknown[]).push({
+        command: hookCommand,
+        failClosed: false,
+    });
+
+    atomicWriteJson(hooksJsonPath, hooksJson);
+    extLog.appendLine(`[${new Date().toISOString()}] MAX Mode block hook installed`);
+}
+
+function removeBlockHook(): void {
+    try { fs.unlinkSync(getHookScriptPath()); } catch { /* ignore */ }
+    try { fs.unlinkSync(getHookCmdPath()); } catch { /* ignore */ }
+
+    const hooksJsonPath = getHooksJsonPath();
+    if (!fs.existsSync(hooksJsonPath)) return;
+
+    try {
+        backupFile(hooksJsonPath);
+        const hooksJson = JSON.parse(fs.readFileSync(hooksJsonPath, "utf-8"));
+        if (Array.isArray(hooksJson.hooks?.beforeSubmitPrompt)) {
+            hooksJson.hooks.beforeSubmitPrompt = hooksJson.hooks.beforeSubmitPrompt.filter(
+                (h: unknown) => !isOurHook(h)
+            );
+            if (hooksJson.hooks.beforeSubmitPrompt.length === 0) {
+                delete hooksJson.hooks.beforeSubmitPrompt;
+            }
+            atomicWriteJson(hooksJsonPath, hooksJson);
+        }
+    } catch { /* ignore */ }
+    extLog.appendLine(`[${new Date().toISOString()}] MAX Mode block hook removed`);
+}
+
+function isBlockHookInstalled(): boolean {
+    const hooksJsonPath = getHooksJsonPath();
+    if (!fs.existsSync(hooksJsonPath)) return false;
+    try {
+        const hooksJson = JSON.parse(fs.readFileSync(hooksJsonPath, "utf-8"));
+        return hooksJson.hooks?.beforeSubmitPrompt?.some((h: any) => isOurHook(h)) || false;
+    } catch {
+        return false;
+    }
+}
+
 export async function activate(context: vscode.ExtensionContext) {
     const extVersion = context.extension?.packageJSON?.version || "unknown";
     const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
@@ -144,11 +380,14 @@ export async function activate(context: vscode.ExtensionContext) {
     fs.mkdirSync(safeDir, { recursive: true });
     ALERT_LOCK_FILE = path.join(safeDir, "alert.lock");
     MAX_MODE_LOCK_FILE = path.join(safeDir, "maxmode.lock");
+    BLOCK_STATE_FILE = path.join(safeDir, "max-mode-block-state.json");
 
     initSecretStorage(context.secrets);
 
     // 从 settings.json 迁移明文 token 到 SecretStorage
     await migrateTokenToSecretStorage(context.secrets);
+
+    await migratePollingInterval();
 
     tracker = new UsageTracker();
     treeProvider = new UsageTreeProvider(tracker);
@@ -256,8 +495,16 @@ while True:
         const cmds = os.platform() === "win32" ? ["python", "py", "python3"] : ["python3", "python"];
         for (const cmd of cmds) {
             try {
-                execFileSync(cmd, ["--version"], { stdio: "pipe", timeout: 5000, windowsHide: true });
-                return cmd;
+                let resolved: string;
+                if (os.platform() === "win32") {
+                    resolved = execFileSync("where.exe", [cmd], { stdio: "pipe", timeout: 5000, windowsHide: true }).toString().trim().split(/\r?\n/)[0];
+                } else {
+                    resolved = execFileSync("which", [cmd], { stdio: "pipe", timeout: 5000 }).toString().trim();
+                }
+                if (resolved && path.isAbsolute(resolved)) {
+                    execFileSync(resolved, ["--version"], { stdio: "pipe", timeout: 5000, windowsHide: true });
+                    return resolved;
+                }
             } catch { /* try next */ }
         }
         return null;
@@ -332,6 +579,8 @@ while True:
         tracker.maxModeInfo = composerInfo
             ? { maxMode: composerInfo.maxMode, modelName: composerInfo.modelName, currentMode: tracker.maxModeInfo?.currentMode || "agent" }
             : null;
+
+        writeBlockState(composerInfo?.maxMode === true);
 
         // 更新 UI 显示
         treeProvider.refresh();
@@ -447,6 +696,7 @@ while True:
     }
 
     startMaxModeWatcher();
+    writeBlockState(tracker.maxModeInfo?.maxMode === true);
 
     function restoreMaxModeDescription() {
         const maxInfo = tracker.maxModeInfo;
@@ -531,12 +781,12 @@ while True:
             const current = config.get<number>("pollingInterval", 30);
 
             const input = await vscode.window.showInputBox({
-                prompt: vscode.l10n.t("Set polling interval in seconds (1-60)"),
+                prompt: vscode.l10n.t("Set polling interval in seconds ({0}-60)", MIN_POLLING_INTERVAL_S),
                 value: String(current),
                 validateInput: (v) => {
                     const n = parseInt(v);
-                    return (isNaN(n) || n < 1 || n > 60)
-                        ? vscode.l10n.t("Please enter a number between 1 and 60")
+                    return (isNaN(n) || n < MIN_POLLING_INTERVAL_S || n > 60)
+                        ? vscode.l10n.t("Please enter a number between {0} and 60", MIN_POLLING_INTERVAL_S)
                         : null;
                 },
             });
@@ -707,6 +957,72 @@ while True:
         }),
     );
 
+    function updateBlockHookContext() {
+        const installed = isBlockHookInstalled();
+        vscode.commands.executeCommand("setContext", "cursorUsageMonitor.blockHookInstalled", installed);
+        if (installed && !verifyHookIntegrity()) {
+            extLog.appendLine(`[${new Date().toISOString()}] Hook 脚本完整性校验失败，重新安装`);
+            try {
+                installBlockHook();
+            } catch (err: unknown) {
+                extLog.appendLine(`[${new Date().toISOString()}] Hook 重新安装失败: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        }
+    }
+    updateBlockHookContext();
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("cursor-usage-monitor.installBlockHook", async () => {
+            const choice = await vscode.window.showWarningMessage(
+                vscode.l10n.t("This will install a Cursor hook that blocks sending messages when MAX Mode is ON. Continue?"),
+                vscode.l10n.t("Install"),
+                vscode.l10n.t("Cancel"),
+            );
+            if (choice === vscode.l10n.t("Install")) {
+                try {
+                    installBlockHook();
+                    const cfg = vscode.workspace.getConfiguration("cursorUsageMonitor");
+                    await cfg.update("blockMaxModeChat", true, vscode.ConfigurationTarget.Global);
+                    writeBlockState(tracker.maxModeInfo?.maxMode === true);
+                    updateBlockHookContext();
+                    vscode.window.showInformationMessage(
+                        vscode.l10n.t("MAX Mode block hook installed successfully")
+                    );
+                } catch (err: any) {
+                    vscode.window.showErrorMessage(
+                        vscode.l10n.t("Hook install failed: {0}", err.message)
+                    );
+                }
+            }
+        }),
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("cursor-usage-monitor.uninstallBlockHook", async () => {
+            const choice = await vscode.window.showWarningMessage(
+                vscode.l10n.t("This will remove the MAX Mode block hook. Continue?"),
+                vscode.l10n.t("Remove"),
+                vscode.l10n.t("Cancel"),
+            );
+            if (choice === vscode.l10n.t("Remove")) {
+                try {
+                    removeBlockHook();
+                    const cfg = vscode.workspace.getConfiguration("cursorUsageMonitor");
+                    await cfg.update("blockMaxModeChat", false, vscode.ConfigurationTarget.Global);
+                    writeBlockState(tracker.maxModeInfo?.maxMode === true);
+                    updateBlockHookContext();
+                    vscode.window.showInformationMessage(
+                        vscode.l10n.t("MAX Mode block hook removed successfully")
+                    );
+                } catch (err: any) {
+                    vscode.window.showErrorMessage(
+                        vscode.l10n.t("Hook remove failed: {0}", err.message)
+                    );
+                }
+            }
+        }),
+    );
+
     context.subscriptions.push(
         vscode.commands.registerCommand("cursor-usage-monitor.configureAlerts", async () => {
             const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
@@ -840,6 +1156,9 @@ while True:
                 updateStatusBar();
                 startPolling();
             }
+            if (e.affectsConfiguration("cursorUsageMonitor.blockMaxModeChat")) {
+                writeBlockState(tracker.maxModeInfo?.maxMode === true);
+            }
         }),
     );
 }
@@ -848,20 +1167,35 @@ const extLog = vscode.window.createOutputChannel("Cursor Usage Monitor - Extensi
 
 function startPolling() {
     if (pollTimer) {
-        clearInterval(pollTimer);
+        clearTimeout(pollTimer);
+        pollTimer = undefined;
     }
 
     const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
-    const pollingInterval = Math.max(1, Math.min(60, config.get<number>("pollingInterval", 30) || 30)) * 1000;
+    const baseIntervalMs = Math.max(MIN_POLLING_INTERVAL_S, Math.min(60, config.get<number>("pollingInterval", 30) || 30)) * 1000;
 
-    extLog.appendLine(`[${new Date().toISOString()}] 启动轮询定时器，间隔=${pollingInterval}ms`);
+    extLog.appendLine(`[${new Date().toISOString()}] 启动轮询定时器，基础间隔=${baseIntervalMs}ms`);
 
-    pollTimer = setInterval(() => {
-        tracker.poll().catch((err) => {
-            extLog.appendLine(`[${new Date().toISOString()}] 轮询出错: ${err}`);
-            console.error("[CursorUsageMonitor] Poll error:", err);
-        });
-    }, pollingInterval);
+    function scheduleNext() {
+        const failures = tracker.consecutiveFailures;
+        let delay = baseIntervalMs;
+        if (failures > 0) {
+            const multiplier = Math.pow(2, Math.min(failures - 1, 6));
+            delay = Math.min(baseIntervalMs * multiplier, MAX_BACKOFF_MS);
+            extLog.appendLine(`[${new Date().toISOString()}] 指数退避: 连续失败 ${failures} 次，下次轮询间隔 ${Math.round(delay / 1000)}s`);
+        }
+
+        pollTimer = setTimeout(async () => {
+            try {
+                await tracker.poll();
+            } catch (err) {
+                extLog.appendLine(`[${new Date().toISOString()}] 轮询出错: ${err}`);
+            }
+            scheduleNext();
+        }, delay);
+    }
+
+    scheduleNext();
 }
 
 async function migrateTokenToSecretStorage(secrets: vscode.SecretStorage): Promise<void> {
@@ -886,12 +1220,30 @@ async function migrateTokenToSecretStorage(secrets: vscode.SecretStorage): Promi
     }
 }
 
+async function migratePollingInterval(): Promise<void> {
+    const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
+    const scopes: { value: number | undefined; target: vscode.ConfigurationTarget }[] = [
+        { value: config.inspect<number>("pollingInterval")?.globalValue, target: vscode.ConfigurationTarget.Global },
+        { value: config.inspect<number>("pollingInterval")?.workspaceValue, target: vscode.ConfigurationTarget.Workspace },
+        { value: config.inspect<number>("pollingInterval")?.workspaceFolderValue, target: vscode.ConfigurationTarget.WorkspaceFolder },
+    ];
+
+    for (const { value, target } of scopes) {
+        if (value !== undefined && value < MIN_POLLING_INTERVAL_S) {
+            await config.update("pollingInterval", MIN_POLLING_INTERVAL_S, target);
+            extLog.appendLine(`已将作用域 ${target} 中的 pollingInterval 从 ${value}s 提升到 ${MIN_POLLING_INTERVAL_S}s`);
+        }
+    }
+}
+
 export function deactivate() {
     if (pollTimer) {
-        clearInterval(pollTimer);
+        clearTimeout(pollTimer);
     }
     for (const item of statusBarItems.values()) {
         item.dispose();
     }
     statusBarItems.clear();
+    const { clearCachedToken } = require("./credentials");
+    clearCachedToken();
 }

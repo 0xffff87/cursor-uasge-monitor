@@ -41,7 +41,8 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
         }
 
         const config = vscode.workspace.getConfiguration("cursorUsageMonitor");
-        const displayCount = config.get<number>("displayCount", 5);
+        const rawDisplayCount = config.get<number>("displayCount", 5);
+        const displayCount = Number.isFinite(rawDisplayCount) ? Math.max(1, Math.min(50, rawDisplayCount!)) : 5;
         const snapshot = this.tracker.lastSnapshot;
 
         const items: UsageTreeItem[] = [];
@@ -112,7 +113,8 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
         }
 
         if (snapshot && snapshot.events.length > 0 && !hiddenItems.includes("recentSection")) {
-            const hiddenTimestamps = new Set(config.get<number[]>("hiddenEventTimestamps", []));
+            const rawHiddenTs = config.get<number[]>("hiddenEventTimestamps", []);
+            const hiddenTimestamps = new Set(Array.isArray(rawHiddenTs) ? rawHiddenTs.slice(0, 1000) : []);
             const visibleEvents = snapshot.events
                 .slice(0, displayCount)
                 .filter((e) => !hiddenTimestamps.has(e.timestamp));
@@ -133,7 +135,7 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
             recentItem.children = visibleEvents.map((e) => {
                 const timeStr = formatEventTime(e.timestamp);
                 const typeLabel = e.kind.includes("USAGE_BASED") ? "On-Demand" : "Included";
-                const modelStr = shortenModel(e.model);
+                const modelStr = sanitizeDisplayString(shortenModel(e.model));
                 const isMaxMode = maxModeAlert && e.maxMode;
 
                 const entry = new UsageTreeItem(
@@ -177,8 +179,9 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
                 }
                 detailChildren.push(tokensItem);
 
+                const safeRequests = Number.isFinite(e.requests) ? e.requests : 0;
                 const reqItem = new UsageTreeItem(
-                    `Requests: ${e.requests}`,
+                    `Requests: ${safeRequests}`,
                     vscode.TreeItemCollapsibleState.None,
                 );
                 reqItem.iconPath = new vscode.ThemeIcon("arrow-swap");
@@ -217,7 +220,7 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
         if (error && items.length > 0) {
             const failures = this.tracker.consecutiveFailures;
             const lastSuccess = this.tracker.lastSuccessTime;
-            let errorText = error;
+            let errorText = sanitizeDisplayString(error);
             if (failures > 1) {
                 errorText = vscode.l10n.t("API unavailable (failed {0} times)", failures);
             }
@@ -236,7 +239,7 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageTreeItem>
         } else if (items.length === 0) {
             if (error) {
                 const errorItem = new UsageTreeItem(
-                    error,
+                    sanitizeDisplayString(error),
                     vscode.TreeItemCollapsibleState.None,
                 );
                 errorItem.iconPath = new vscode.ThemeIcon("warning", new vscode.ThemeColor("charts.red"));
@@ -286,6 +289,7 @@ function formatTokens(tokens: number): string {
 function sanitizeDisplayString(s: string, maxLen = 128): string {
     return s
         .replace(/[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069\ufeff]/g, "")
+        .replace(/\$\([^)]*\)/g, "")
         .slice(0, maxLen);
 }
 

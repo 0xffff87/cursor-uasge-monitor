@@ -26,6 +26,9 @@
   "cmd.hideSection": "Hide This Section",
   "cmd.hideEvent": "Hide This Entry",
   "cmd.showAllItems": "Show All Items",
+  "cmd.installBlockHook": "Install MAX Mode Block Hook",
+  "cmd.uninstallBlockHook": "Uninstall MAX Mode Block Hook",
   "cmd.pinToStatusBar": "Pin to Status Bar",
-  "cmd.unpinFromStatusBar": "Unpin from Status Bar"
+  "cmd.unpinFromStatusBar": "Unpin from Status Bar",
+  "config.blockMaxModeChat": "Block sending messages to AI when MAX Mode is enabled. Use 'Setup MAX Mode Block Hook' command to install the Cursor hook."
 }

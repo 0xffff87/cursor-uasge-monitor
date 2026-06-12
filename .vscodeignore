@@ -1,4 +1,4 @@
-.vscode/**
+﻿.vscode/**
 .vscode-test/**
 src/**
 .gitignore
@@ -6,3 +6,11 @@ tsconfig.json
 **/*.ts
 **/*.map
 *.vsix
+.git/**
+.cursor/**
+docs/**
+package-lock.json
+**/.DS_Store
+node_modules/**/test/**
+node_modules/**/*.map
+node_modules/**/*debug*

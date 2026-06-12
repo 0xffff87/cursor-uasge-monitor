@@ -80,5 +80,19 @@
   "Disable Max Mode alert": "关闭 Max Mode 提醒",
   "Enable Max Mode alert": "开启 Max Mode 提醒",
   "Currently: ON": "当前: 已开启",
-  "Currently: OFF": "当前: 已关闭"
+  "Currently: OFF": "当前: 已关闭",
+  "MAX Mode block hook installed successfully": "MAX Mode 拦截 Hook 已安装成功",
+  "MAX Mode block hook removed successfully": "MAX Mode 拦截 Hook 已卸载成功",
+  "Install MAX Mode Block Hook": "安装 MAX Mode 拦截 Hook",
+  "Remove MAX Mode Block Hook": "卸载 MAX Mode 拦截 Hook",
+  "This will install a Cursor hook that blocks sending messages when MAX Mode is ON. Continue?": "这将安装一个 Cursor Hook，在 MAX Mode 开启时阻止发送消息。是否继续？",
+  "Install": "安装",
+  "Cancel": "取消",
+  "Remove": "卸载",
+  "This will remove the MAX Mode block hook. Continue?": "这将卸载 MAX Mode 拦截 Hook。是否继续？",
+  "⛔ MAX Mode is ON. Message blocked by Cursor Usage Monitor.": "⛔ MAX Mode 已开启，消息已被 Cursor Usage Monitor 拦截。",
+  "Hook install failed: {0}": "Hook 安装失败：{0}",
+  "Hook remove failed: {0}": "Hook 卸载失败：{0}",
+  "Block MAX Mode Chat enabled. Run 'Setup MAX Mode Block Hook' command to install the hook.": "已启用「禁止 MAX Mode 对话」。请运行「安装 MAX Mode 拦截 Hook」命令来安装 Hook。",
+  "MAX Mode block is active — messages will be blocked": "MAX Mode 拦截已激活 — 消息将被阻止"
 }

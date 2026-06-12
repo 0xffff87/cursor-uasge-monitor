@@ -113,17 +113,22 @@ export class UsageTracker {
             const isPartialFailure = result.teamDataError || result.eventsError;
 
             if (isPartialFailure) {
-                this._consecutiveFailures++;
                 this._eventsError = result.eventsError;
 
                 const reasons: string[] = [];
                 if (result.teamDataError) reasons.push("团队数据");
                 if (result.eventsError) reasons.push("事件数据");
-                log.appendLine(`[${ts}] poll#${pollId} 部分失败: ${reasons.join("+")}获取失败 (耗时 ${elapsed}ms, 连续失败 ${this._consecutiveFailures} 次)`);
-                log.appendLine(`  不更新本地数据，保留上次成功的快照`);
+                log.appendLine(`[${ts}] poll#${pollId} 部分失败: ${reasons.join("+")}获取失败 (耗时 ${elapsed}ms)`);
 
-                // 部分失败时不更新 _lastSnapshot，保留上次完全成功的数据
-                // 但仍然触发 UI 刷新以显示错误状态
+                if (this._lastSnapshot) {
+                    log.appendLine(`  已有历史快照，保留不覆盖`);
+                } else {
+                    log.appendLine(`  无历史快照，使用当前部分数据`);
+                    this._lastSnapshot = snapshot;
+                    this._lastError = `部分数据不可用: ${reasons.join("+")}获取失败`;
+                }
+                this._consecutiveFailures = 0;
+                this._lastSuccessTime = new Date();
                 if (this._onUpdate) {
                     this._onUpdate();
                 }
@@ -205,14 +210,18 @@ export class UsageTracker {
 
             return changed;
         } catch (err) {
-            log.appendLine(`[${ts}] poll#${pollId} 异常: ${err}`);
-            console.error("[CursorUsageMonitor] Poll error:", err);
-            if (force && this._onUpdate) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            log.appendLine(`[${ts}] poll#${pollId} 异常: ${errMsg}`);
+            this._lastError = `Poll 异常: ${errMsg}`;
+            this._consecutiveFailures++;
+            if (this._onUpdate) {
                 this._onUpdate();
             }
             return false;
         } finally {
-            this._polling = false;
+            if (pollId === this._activePollId) {
+                this._polling = false;
+            }
             log.appendLine(`[${new Date().toISOString()}] poll#${pollId} 结束`);
         }
     }

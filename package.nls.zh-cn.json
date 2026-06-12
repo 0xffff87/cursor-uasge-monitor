@@ -26,6 +26,9 @@
   "cmd.hideSection": "隐藏此区域",
   "cmd.hideEvent": "隐藏此条目",
   "cmd.showAllItems": "显示全部项",
+  "cmd.installBlockHook": "安装 MAX Mode 拦截 Hook",
+  "cmd.uninstallBlockHook": "卸载 MAX Mode 拦截 Hook",
   "cmd.pinToStatusBar": "固定到状态栏",
-  "cmd.unpinFromStatusBar": "从状态栏移除"
+  "cmd.unpinFromStatusBar": "从状态栏移除",
+  "config.blockMaxModeChat": "开启 Max Mode 时禁止向 AI 发送消息。使用「安装 MAX Mode 拦截 Hook」命令安装 Cursor Hook。"
 }

@@ -5,42 +5,47 @@ import { execFile } from "child_process";
 
 const MAX_SQLJS_DB_SIZE = 64 * 1024 * 1024;
 const MAX_JSON_FILE_SIZE = 10 * 1024 * 1024;
+const TOKEN_CACHE_TTL_MS = 15 * 60 * 1000;
 const log = vscode.window.createOutputChannel("Cursor Usage Monitor - Credentials");
 
 let cachedAccessToken: string | null = null;
 let cachedUserId: string | null = null;
+let tokenCachedAt = 0;
 
 export function clearCachedToken(): void {
-    log.appendLine(`清除缓存 token (had userId=${!!cachedUserId}, had accessToken=${!!cachedAccessToken})`);
+    log.appendLine("清除缓存 token");
     cachedAccessToken = null;
     cachedUserId = null;
+    tokenCachedAt = 0;
 }
 
 export async function getUserId(): Promise<string | null> {
-    if (cachedUserId) return cachedUserId;
+    if (cachedUserId && Date.now() - tokenCachedAt < TOKEN_CACHE_TTL_MS) return cachedUserId;
+    cachedUserId = null;
 
     const paths = getStoragePaths();
     for (const p of paths) {
         try {
             const userId = await findUserIdInFile(p);
             if (userId) {
-                log.appendLine(`从 ${p} 获取到 userId: ${userId.substring(0, 10)}...`);
+                log.appendLine("userId 获取成功");
                 cachedUserId = userId;
+                tokenCachedAt = Date.now();
                 return userId;
             }
-        } catch (err) {
-            log.appendLine(`读取 ${p} 失败: ${err}`);
+        } catch {
+            log.appendLine("读取存储文件失败");
         }
     }
 
-    // 回退：从数据库中读取 userId
     const dbPath = getDbPath();
     if (fs.existsSync(dbPath)) {
         const rawUserId = await queryDb(dbPath, "cursorAuth/cachedSignUpId");
         const userId = rawUserId ? extractUserId(rawUserId) : null;
         if (userId) {
-            log.appendLine(`从数据库获取到 userId: ${userId.substring(0, 10)}...`);
+            log.appendLine("从数据库获取到 userId");
             cachedUserId = userId;
+            tokenCachedAt = Date.now();
             return userId;
         }
     }
@@ -50,17 +55,24 @@ export async function getUserId(): Promise<string | null> {
 }
 
 export async function getAccessToken(forceRefresh = false): Promise<string | null> {
-    if (cachedAccessToken && !forceRefresh) return cachedAccessToken;
+    if (cachedAccessToken && !forceRefresh && Date.now() - tokenCachedAt < TOKEN_CACHE_TTL_MS) return cachedAccessToken;
     cachedAccessToken = null;
 
     const dbPath = getDbPath();
     if (!fs.existsSync(dbPath)) {
-        log.appendLine(`数据库文件不存在: ${dbPath}`);
+        log.appendLine("数据库文件不存在");
         return null;
     }
 
-    const dbSize = fs.statSync(dbPath).size;
-    log.appendLine(`数据库路径: ${dbPath} (${(dbSize / 1024 / 1024).toFixed(1)}MB)`);
+    try {
+        const stat = fs.lstatSync(dbPath);
+        if (stat.isSymbolicLink()) {
+            log.appendLine("数据库路径为符号链接，拒绝访问");
+            return null;
+        }
+    } catch {
+        return null;
+    }
 
     const keys = [
         "cursorAuth/accessToken",
@@ -70,14 +82,13 @@ export async function getAccessToken(forceRefresh = false): Promise<string | nul
         try {
             const token = await queryDb(dbPath, key);
             if (token) {
-                log.appendLine(`通过 key "${key}" 获取到 accessToken (长度=${token.length})`);
+                log.appendLine("accessToken 获取成功");
                 cachedAccessToken = token;
+                tokenCachedAt = Date.now();
                 return token;
-            } else {
-                log.appendLine(`通过 key "${key}" 查询结果为空`);
             }
-        } catch (err) {
-            log.appendLine(`通过 key "${key}" 查询失败: ${err}`);
+        } catch {
+            log.appendLine("accessToken 查询失败");
         }
     }
 
@@ -86,19 +97,30 @@ export async function getAccessToken(forceRefresh = false): Promise<string | nul
 }
 
 async function queryDb(dbPath: string, key: string): Promise<string | null> {
+    let fd: number | undefined;
     try {
-        const dbSize = fs.statSync(dbPath).size;
-        if (dbSize >= MAX_SQLJS_DB_SIZE) {
-            log.appendLine(`数据库过大 (${(dbSize / 1024 / 1024).toFixed(1)}MB >= ${MAX_SQLJS_DB_SIZE / 1024 / 1024}MB)，使用 Python 查询 (key=${key})`);
+        fd = fs.openSync(dbPath, "r");
+        const stat = fs.fstatSync(fd);
+        if (stat.isSymbolicLink() || !stat.isFile()) {
+            log.appendLine("数据库路径非普通文件，拒绝访问");
+            return null;
+        }
+        if (stat.size >= MAX_SQLJS_DB_SIZE) {
+            log.appendLine("数据库过大，使用 Python 查询");
+            fs.closeSync(fd);
+            fd = undefined;
             return await queryDbViaPython(dbPath, key);
         }
+        fs.closeSync(fd);
+        fd = undefined;
         return await queryDbViaSqlJs(dbPath, key);
     } catch (error) {
+        if (fd !== undefined) try { fs.closeSync(fd); } catch {}
         if (isFileTooLargeError(error)) {
-            log.appendLine(`sql.js 文件过大异常，回退到 Python (key=${key})`);
+            log.appendLine("sql.js 文件过大异常，回退到 Python");
             return await queryDbViaPython(dbPath, key);
         }
-        log.appendLine(`queryDb 异常: ${error}`);
+        log.appendLine("queryDb 异常");
         return null;
     }
 }
@@ -145,9 +167,10 @@ function getDbPath(): string {
 
 async function findUserIdInFile(filePath: string): Promise<string | null> {
     if (!fs.existsSync(filePath)) return null;
-    const stat = fs.statSync(filePath);
+    const stat = fs.lstatSync(filePath);
+    if (stat.isSymbolicLink() || !stat.isFile()) return null;
     if (stat.size > MAX_JSON_FILE_SIZE) {
-        log.appendLine(`文件过大，跳过: ${filePath} (${stat.size} bytes)`);
+        log.appendLine("文件过大，跳过");
         return null;
     }
     const content = fs.readFileSync(filePath, "utf8");
@@ -211,29 +234,53 @@ async function queryDbViaSqlJs(dbPath: string, key: string): Promise<string | nu
         } finally {
             db.close();
         }
-    } catch (err) {
-        log.appendLine(`sql.js 查询失败 (key=${key}): ${err}, 回退到 Python`);
+    } catch {
+        log.appendLine("sql.js 查询失败，回退到 Python");
         return queryDbViaPython(dbPath, key);
     }
 }
 
-async function queryDbViaPython(dbPath: string, key: string): Promise<string | null> {
+function resolvePythonPath(): string | null {
     const cmds = process.platform === "win32" ? ["python", "py", "python3"] : ["python3", "python"];
+    const { execFileSync } = require("child_process");
+    for (const cmd of cmds) {
+        try {
+            let resolved: string;
+            if (process.platform === "win32") {
+                resolved = execFileSync("where.exe", [cmd], { stdio: "pipe", timeout: 5000, windowsHide: true }).toString().trim().split(/\r?\n/)[0];
+            } else {
+                resolved = execFileSync("which", [cmd], { stdio: "pipe", timeout: 5000 }).toString().trim();
+            }
+            if (resolved && path.isAbsolute(resolved)) {
+                execFileSync(resolved, ["--version"], { stdio: "pipe", timeout: 5000, windowsHide: true });
+                return resolved;
+            }
+        } catch { /* try next */ }
+    }
+    return null;
+}
+
+async function queryDbViaPython(dbPath: string, key: string): Promise<string | null> {
+    const pythonPath = resolvePythonPath();
+    if (!pythonPath) {
+        log.appendLine("Python 查询: 未找到可信 Python 解释器");
+        return null;
+    }
+
     const script =
         `import sqlite3, sys; conn = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True); cur = conn.cursor(); ` +
         `cur.execute("SELECT value FROM ItemTable WHERE key = ? LIMIT 1", (sys.argv[2],)); ` +
         `row = cur.fetchone(); print(row[0] if row and row[0] else ''); conn.close()`;
 
-    for (const cmd of cmds) {
-        try {
-            const token = await execFileAsync(cmd, ["-c", script, dbPath, key]);
-            if (token) {
-                log.appendLine(`通过 ${cmd} 获取到值 (key=${key})`);
-                return token;
-            }
-        } catch { /* try next */ }
+    try {
+        const token = await execFileAsync(pythonPath, ["-c", script, dbPath, key]);
+        if (token) {
+            log.appendLine("Python 查询成功");
+            return token;
+        }
+    } catch {
+        log.appendLine("Python 查询失败");
     }
-    log.appendLine(`所有 Python 命令均失败 (key=${key})`);
     return null;
 }
 
@@ -278,8 +325,8 @@ export async function getMaxModeInfo(): Promise<MaxModeInfo | null> {
             modelName: composerConfig.modelName || "default",
             currentMode,
         };
-    } catch (err) {
-        log.appendLine(`读取 Max Mode 信息失败: ${err}`);
+    } catch {
+        log.appendLine("读取 Max Mode 信息失败");
         return null;
     }
 }
